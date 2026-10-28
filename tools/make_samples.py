@@ -158,6 +158,59 @@ def write_wav(path, x):
         w.writeframes(pcm.tobytes())
 
 
+# ---- pitched instruments (rendered at C3, C4, C5; the app pitch-shifts from the nearest) ----
+ROOTS = {48: 130.813, 60: 261.626, 72: 523.251}
+
+
+def keys_note(f, dur=3.0):
+    """Electric-piano style: warm fundamental, decaying tine partials, soft hammer click."""
+    t = tt(dur)
+    x = np.zeros(len(t))
+    for k, (amp, dec) in enumerate([(1.0, 1.8), (0.45, 0.9), (0.2, 0.5), (0.1, 0.3), (0.05, 0.2)], start=1):
+        if f * k < 12000:
+            x += amp * np.sin(2 * np.pi * f * k * t + 0.3 * k) * np.exp(-t / dec)
+    x += 0.25 * np.sin(2 * np.pi * f * 7.1 * t) * np.exp(-t / 0.06)  # bell-like tine
+    x *= 1 + 0.06 * np.sin(2 * np.pi * 4.7 * t)
+    x *= 1 - np.exp(-t / 0.003)
+    x += filt(noise(len(t)), 'band', [1500, 5000]) * np.exp(-t / 0.01) * 0.12
+    return sat(x / np.max(np.abs(x)), 1.4)
+
+
+def pad_note(f, dur=4.2):
+    """Warm detuned saw pad with a slow attack and a built-in release."""
+    t = tt(dur)
+    x = np.zeros(len(t))
+    for cents in (-9, -4, 0, 4, 9):
+        ff = f * 2 ** (cents / 1200)
+        for k in range(1, 60):
+            if ff * k > 9000:
+                break
+            x += np.sin(2 * np.pi * ff * k * t + k) / k
+    x = filt(x, 'low', 1500, 2)
+    a = np.minimum(1, t / 0.35)
+    r = np.minimum(1, (dur - t) / 0.7)
+    return x * a * r
+
+
+def lead_note(f, dur=1.6):
+    """Plucky synth lead: saw+square through a closing lowpass."""
+    t = tt(dur)
+    saw = np.zeros(len(t))
+    for k in range(1, 40):
+        if f * k > 14000:
+            break
+        saw += np.sin(2 * np.pi * f * k * t) / k
+    sq = np.sign(np.sin(2 * np.pi * f * 1.004 * t))
+    raw = saw * 0.6 + sq * 0.25
+    bright, dull = filt(raw, 'low', 6500), filt(raw, 'low', 900)
+    m = np.exp(-t / 0.09)
+    x = bright * m + dull * (1 - m)
+    return x * env(t, 0.55, 0.004) * np.minimum(1, (dur - t) / 0.2)
+
+
+INSTRUMENTS = {'keys': keys_note, 'pad': pad_note, 'lead': lead_note}
+
+
 if __name__ == '__main__':
     for kit, insts in KITS.items():
         d = os.path.join(OUT, kit)
@@ -166,3 +219,11 @@ if __name__ == '__main__':
             x = finish(fn())
             write_wav(os.path.join(d, name + '.wav'), x)
             print(f'{kit}/{name}: {len(x) / SR:.2f}s peak {np.max(np.abs(x)):.2f}')
+
+    d = os.path.join(OUT, 'inst')
+    os.makedirs(d, exist_ok=True)
+    for name, fn in INSTRUMENTS.items():
+        for root, f in ROOTS.items():
+            x = finish(fn(f), peak=0.8)
+            write_wav(os.path.join(d, f'{name}-{root}.wav'), x)
+            print(f'inst/{name}-{root}: {len(x) / SR:.2f}s')
