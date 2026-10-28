@@ -1,4 +1,4 @@
-const CACHE = 'beat-maker-v9';
+const CACHE = 'beat-maker-v10';
 const ASSETS = ['./', 'index.html', 'manifest.json', 'icon.svg', 'icon-192.png', 'icon-512.png', 'icon-180.png',
   ...['trap', 'boombap', 'pop', 'lofi', 'latin'].flatMap(k => ['kick', 'snare', 'clap', 'hat', 'ohat', 'bass'].map(i => `samples/${k}/${i}.wav`)),
   ...['keys', 'pad', 'lead'].flatMap(i => [48, 60, 72].map(r => `samples/inst/${i}-${r}.wav`)),

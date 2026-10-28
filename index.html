@@ -182,6 +182,8 @@ const GENRES = {
   reggaeton: {bpm: 95,  swing: 0,  kick: '1000100010001000', snare: '0001001000010010', clap: '0000000000000000', hat: '1010101010101010', ohat: '0000000000000000', minor: true},
   drill:     {bpm: 142, swing: 0,  kick: '1000000100100100', snare: '0000000010000000', clap: '0000000010000000', hat: '1011101110111011', ohat: '0000000000000010', minor: true},
   rnb:       {bpm: 72,  swing: 30, kick: '1000000100100000', snare: '0000100000001000', clap: '0000100000001000', hat: '0010001000100010', ohat: '0000000000000000', minor: true},
+  trapdembow: {bpm: 92, swing: 0, kick: '1000100010000010', snare: '0001001000010010', clap: '0000000000000000', hat: '1011101110111011', ohat: '0000000000000010', minor: true},
+  dembow:    {bpm: 116, swing: 0, kick: '1000100010001000', snare: '0001001000010010', clap: '0000000000000000', hat: '0010001000100010', ohat: '0000100000001000', minor: true},
   afrobeats: {bpm: 102, swing: 12, kick: '1000001000100010', snare: '0000100000001000', clap: '0000100100001001', hat: '1011101110111011', ohat: '0010000000100000', minor: false},
 };
 const STYLES = [
@@ -191,11 +193,13 @@ const STYLES = [
   ['lofi', 'Lo-fi', 'Slow, soft and dusty with mellow chords'],
   ['rnb', 'R&B', 'Smooth and slow, warm chords, laid-back groove'],
   ['pop', 'Pop', 'Bright, clean and catchy with a steady backbeat'],
+  ['trapdembow', 'Trap dembow', 'Dembow snare pattern with trap hats and sliding 808s'],
+  ['dembow', 'Dembow', 'Fast Caribbean dembow: kick on every beat, tun-ka snare'],
   ['reggaeton', 'Reggaeton', 'Dembow rhythm with a Latin feel'],
   ['afrobeats', 'Afrobeats', 'Bouncy shaker groove, warm and danceable'],
 ];
 const GENRE_NAME = Object.fromEntries(STYLES.map(x => [x[0], x[1]]));
-const TRAPLIKE = ['trap', 'drill'];
+const TRAPLIKE = ['trap', 'drill', 'trapdembow'];
 for (const [k, name] of STYLES) $('#genre').add(new Option(name, k));
 
 const MOODS = {
@@ -298,7 +302,7 @@ const planSchema = () => ({
 });
 const SYSTEM = `You are an expert hip-hop / pop / latin music producer. The user gives song lyrics (English, Spanish or mixed), one line per bar, numbered. Design the full beat that fits them.
 TIMING MATTERS MOST: the lyrics are performed live over this beat, so the beat must not outrun the words. A comfortable rap or sung rate is 2.5 to 3.5 syllables per second, slower than you would think. Each lyric line spans bars_per_line bars (1 or 2); choose bars_per_line and the BPM so that (syllables in a typical line) / (bars_per_line * 240 / BPM) lands between 2.5 and 3.5. Lines over about 10 syllables usually need 2 bars; a fast trap tempo with 2 bars per line is normal. Never pick a tempo that makes the lyrics rushed.
-Genres: trap (hard 808s, rolling hats, half-time snare), drill (dark, sliding 808s, sparse snare, stuttering hats), boombap (punchy kick, snare on 2 and 4, dusty), lofi (slow, soft, mellow), rnb (smooth, slow, warm chords), pop (bright, clean, steady backbeat), reggaeton (dembow, Latin), afrobeats (bouncy shaker groove).
+Genres: trap (hard 808s, rolling hats, half-time snare), drill (dark, sliding 808s, sparse snare, stuttering hats), boombap (punchy kick, snare on 2 and 4, dusty), lofi (slow, soft, mellow), rnb (smooth, slow, warm chords), pop (bright, clean, steady backbeat), reggaeton (dembow, Latin), trapdembow (dembow snare pattern with trap hats and sliding 808s), dembow (fast Caribbean dembow, kick on every beat), afrobeats (bouncy shaker groove).
 Song level: the genre (pick the closest), BPM (60-180), the key (root note + minor/major), swing 0-60, a one-or-two word mood, energy 1-10, and a short summary (max 25 words) of why this beat fits.
 For EACH line, in order (a bar is 4/4 with 16 sixteenth-note steps; step 0 is beat 1, 4 is beat 2, 8 is beat 3, 12 is beat 4). When bars_per_line is 2, a line spans two bars, so stress_steps and melody steps run 0-31 across both bars, drums and chord_degree describe the FIRST bar (the app varies the second bar itself), and chord_degree_b is the chord for the second bar (repeat chord_degree for 1-bar lines):
 - stress_steps: steps (at most 12) where the emphasized syllables fall when the line is performed, spread evenly across the whole span.
@@ -340,7 +344,7 @@ const clamp = (v, a, b) => Math.max(a, Math.min(b, Math.round(+v) || a));
 const STEPS = 16;
 const parse = s => [...s].map(Number);
 /* ---------- tempo: fit the beat to how fast the lyrics can be performed ---------- */
-const TEMPO_RANGE = {trap: [110, 150], drill: [128, 146], boombap: [60, 98], pop: [72, 124], lofi: [56, 88], reggaeton: [70, 102], rnb: [58, 86], afrobeats: [84, 112]};
+const TEMPO_RANGE = {trap: [110, 150], drill: [128, 146], boombap: [60, 98], pop: [72, 124], lofi: [56, 88], reggaeton: [70, 102], rnb: [58, 86], afrobeats: [84, 112], trapdembow: [84, 104], dembow: [100, 124]};
 const TARGET_RATE = 2.8; // syllables per second that feels natural to rap or sing
 const lineRate = (avg, bpm, bpl) => avg / (bpl * 240 / bpm);
 function fitTempo(avg, g, forced) {
@@ -360,11 +364,11 @@ const PROGS = {
   minor: [[1, 6, 3, 7], [1, 4, 6, 5], [1, 7, 6, 7], [1, 6, 4, 5]],
   major: [[1, 5, 6, 4], [1, 4, 5, 4], [6, 4, 1, 5], [1, 6, 4, 5]],
 };
-const COMP = {trap: '1000000000100000', boombap: '1000001010000000', pop: '1000100010001000', lofi: '1000000100100000', reggaeton: '1001001010010010', drill: '1000000000100000', rnb: '1000000010000000', afrobeats: '1001001000100100'};
+const COMP = {trap: '1000000000100000', boombap: '1000001010000000', pop: '1000100010001000', lofi: '1000000100100000', reggaeton: '1001001010010010', drill: '1000000000100000', rnb: '1000000010000000', afrobeats: '1001001000100100', trapdembow: '1001001010010010', dembow: '1000100010001000'};
 const SEVENTHS = ['lofi', 'boombap', 'pop', 'rnb'];
 const scaleNote = i => { const sc = SCALES[S.minor ? 'minor' : 'major']; return 12 * Math.floor(i / 7) + sc[((i % 7) + 7) % 7]; };
 const pick = (rng, a) => a[Math.floor(rng() * a.length)];
-const chordInst = () => S.chordSound !== 'auto' ? S.chordSound : (TRAPLIKE.includes(S.genre) ? 'pad' : 'keys');
+const chordInst = () => S.chordSound !== 'auto' ? S.chordSound : (S.genre === 'trap' || S.genre === 'drill' ? 'pad' : 'keys');
 const noteName = m => NOTE[m % 12] + (Math.floor(m / 12) - 1);
 
 function chordName(notes, rootPc) {
@@ -437,7 +441,7 @@ function groove(bar, g, rng, skipDrums) {
   if (!skipDrums && (g === 'boombap' || g === 'lofi' || g === 'pop' || g === 'rnb')) for (const gs of [7, 9, 15]) if (!bar.snare[gs] && !bar.kick[gs] && rng() < 0.35) bar.snare[gs] = 0.22 + rng() * 0.12;
   let first = true;
   bar.chords = bar.chords.map(v => { if (!v) return 0; const r = first ? 1 : 0.75; first = false; return r; });
-  if (TRAPLIKE.includes(g) || g === 'reggaeton' || g === 'afrobeats') {
+  if (TRAPLIKE.includes(g) || g === 'reggaeton' || g === 'afrobeats' || g === 'dembow') {
     const idx = bar.bass.map((v, i) => v >= 0 ? i : -1).filter(i => i >= 0);
     idx.forEach((i, k) => { const nx = idx[k + 1]; if (nx !== undefined && bar.bass[nx] !== bar.bass[i] && rng() < 0.35) bar.slide[i] = 1; });
   }
@@ -686,7 +690,7 @@ const V = {
   },
 };
 /* ---------- sampler: built-in kits + user samples ---------- */
-const KIT_FOR = {trap: 'trap', drill: 'trap', boombap: 'boombap', pop: 'pop', rnb: 'pop', lofi: 'lofi', reggaeton: 'latin', afrobeats: 'latin'};
+const KIT_FOR = {trap: 'trap', drill: 'trap', boombap: 'boombap', pop: 'pop', rnb: 'pop', lofi: 'lofi', reggaeton: 'latin', afrobeats: 'latin', trapdembow: 'latin', dembow: 'latin'};
 const KITS = ['trap', 'boombap', 'pop', 'lofi', 'latin'];
 const GAIN = {kick: 0.8, snare: 0.6, clap: 0.5, hat: 0.35, ohat: 0.35, bass: 0.55, crash: 0.4, riser: 0.35};
 const KIT_ROOT = 33; // built-in 808 samples are rendered at A1
@@ -893,6 +897,8 @@ const FEEL = {
   drill: {hat: 0.003},
   rnb: {hat: 0.006, kick: 0.005, snare: 0.012, late: {snare: 0.012, kick: 0.004}},
   afrobeats: {hat: 0.004, snare: 0.004},
+  trapdembow: {hat: 0.003},
+  dembow: {hat: 0.003},
 };
 const INST_ID = {kick: 1, snare: 2, clap: 3, hat: 4, ohat: 5, bass: 6, chords: 7, lead: 8};
 function feel(inst, bar, step) {
