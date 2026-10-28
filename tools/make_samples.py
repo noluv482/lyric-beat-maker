@@ -211,6 +211,31 @@ def lead_note(f, dur=1.6):
 INSTRUMENTS = {'keys': keys_note, 'pad': pad_note, 'lead': lead_note}
 
 
+# ---- fx: crash + riser (kit-independent) ----
+def crash(dur=2.2):
+    t = tt(dur)
+    x = filt(noise(len(t)), 'high', 3500, 2) * env(t, 0.55, 0.002)
+    x += filt(noise(len(t)), 'band', [6000, 12000]) * env(t, 0.9, 0.004) * 0.6
+    return reverb(x, 0.5, 0.2)
+
+
+def riser(dur=2.0):
+    t = tt(dur)
+    n = noise(len(t))
+    out = np.zeros(len(t))
+    centers = np.geomspace(350, 9000, 9)
+    for k, fc in enumerate(centers):
+        band = filt(n, 'band', [fc * 0.7, min(fc * 1.4, 18000)])
+        w = np.clip(1 - np.abs(t / dur * (len(centers) - 1) - k), 0, 1)
+        out += band * w
+    out *= (t / dur) ** 1.6
+    out[-int(SR * 0.02):] *= np.linspace(1, 0, int(SR * 0.02))
+    return out
+
+
+FX = {'crash': crash, 'riser': riser}
+
+
 if __name__ == '__main__':
     for kit, insts in KITS.items():
         d = os.path.join(OUT, kit)
@@ -227,3 +252,10 @@ if __name__ == '__main__':
             x = finish(fn(f), peak=0.8)
             write_wav(os.path.join(d, f'{name}-{root}.wav'), x)
             print(f'inst/{name}-{root}: {len(x) / SR:.2f}s')
+
+    d = os.path.join(OUT, 'fx')
+    os.makedirs(d, exist_ok=True)
+    for name, fn in FX.items():
+        x = finish(fn(), peak=0.85)
+        write_wav(os.path.join(d, name + '.wav'), x)
+        print(f'fx/{name}: {len(x) / SR:.2f}s')
