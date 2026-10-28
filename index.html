@@ -62,6 +62,8 @@ dialog input[type=password],dialog input[type=text]{width:100%;background:#0b0c1
 #karaoke span{color:#4d5266;transition:color .08s}
 #karaoke span.on{color:#fff}
 #karaoke span.now{color:var(--acc)}
+#meter{display:inline-block;width:70px;height:8px;background:#0b0c11;border:1px solid var(--line);border-radius:4px;overflow:hidden}
+#meter i{display:block;height:100%;width:0;background:var(--acc)}
 .hint{color:var(--mut);font-size:13px;margin:6px 0 0}
 </style>
 </head>
@@ -91,9 +93,10 @@ dialog input[type=password],dialog input[type=text]{width:100%;background:#0b0c1
   <div class="row" style="margin:0 0 8px">
     <button class="pri" id="play">▶ Play</button>
     <select id="genre"></select>
-    <label>BPM <input type="range" id="bpm" min="60" max="180" value="120"><b id="bpmv">120</b></label>
+    <label>BPM <button id="bpmdn" title="5 slower">−</button><input type="range" id="bpm" min="40" max="180" value="120"><button id="bpmup" title="5 faster">+</button><b id="bpmv">120</b></label>
     <label>Swing <input type="range" id="swing" min="0" max="60" value="0"></label>
     <button id="wav">Export WAV</button>
+    <span id="meter" title="Output level: if this moves but you hear nothing, check the silent switch and volume"><i></i></span>
   </div>
   <div id="barlabel" class="hint"></div>
   <div class="seq" id="seq"></div>
@@ -274,7 +277,7 @@ const planSchema = () => ({
   },
 });
 const SYSTEM = `You are an expert hip-hop / pop / latin music producer. The user gives song lyrics (English, Spanish or mixed), one line per bar, numbered. Design the full beat that fits them.
-TIMING MATTERS MOST: the lyrics are performed live over this beat, so the beat must not outrun the words. A natural rap or sung rate is 3 to 4 syllables per second. Each lyric line spans bars_per_line bars (1 or 2); choose bars_per_line and the BPM so that (syllables in a typical line) / (bars_per_line * 240 / BPM) lands between 3 and 4. Lines over about 10 syllables usually need 2 bars; a fast trap tempo with 2 bars per line is normal. Never pick a tempo that makes the lyrics rushed.
+TIMING MATTERS MOST: the lyrics are performed live over this beat, so the beat must not outrun the words. A comfortable rap or sung rate is 2.5 to 3.5 syllables per second, slower than you would think. Each lyric line spans bars_per_line bars (1 or 2); choose bars_per_line and the BPM so that (syllables in a typical line) / (bars_per_line * 240 / BPM) lands between 2.5 and 3.5. Lines over about 10 syllables usually need 2 bars; a fast trap tempo with 2 bars per line is normal. Never pick a tempo that makes the lyrics rushed.
 Song level: the genre (pick the closest), BPM (60-180), the key (root note + minor/major), swing 0-60, a one-or-two word mood, energy 1-10, and a short summary (max 25 words) of why this beat fits.
 For EACH line, in order (a bar is 4/4 with 16 sixteenth-note steps; step 0 is beat 1, 4 is beat 2, 8 is beat 3, 12 is beat 4). When bars_per_line is 2, a line spans two bars, so stress_steps and melody steps run 0-31 across both bars, drums and chord_degree describe the FIRST bar (the app varies the second bar itself), and chord_degree_b is the chord for the second bar (repeat chord_degree for 1-bar lines):
 - stress_steps: steps (at most 12) where the emphasized syllables fall when the line is performed, spread evenly across the whole span.
@@ -313,8 +316,8 @@ const clamp = (v, a, b) => Math.max(a, Math.min(b, Math.round(+v) || a));
 const STEPS = 16;
 const parse = s => [...s].map(Number);
 /* ---------- tempo: fit the beat to how fast the lyrics can be performed ---------- */
-const TEMPO_RANGE = {trap: [124, 150], boombap: [68, 98], pop: [80, 124], lofi: [60, 88], reggaeton: [76, 102]};
-const TARGET_RATE = 3.4; // syllables per second that feels natural to rap or sing
+const TEMPO_RANGE = {trap: [110, 150], boombap: [60, 98], pop: [72, 124], lofi: [56, 88], reggaeton: [70, 102]};
+const TARGET_RATE = 2.8; // syllables per second that feels natural to rap or sing
 const lineRate = (avg, bpm, bpl) => avg / (bpl * 240 / bpm);
 function fitTempo(avg, g, forced) {
   const [lo, hi] = TEMPO_RANGE[g] || [70, 150];
@@ -587,9 +590,9 @@ function applyPlan(info, plan) {
   if (GENRES[plan.genre]) S.genre = plan.genre;
   S.swing = clamp(plan.swing, 0, 60); S.minor = !!plan.minor;
   S.bpl = S.bplChoice === 'auto' ? clamp(plan.bars_per_line, 1, 2) : +S.bplChoice;
-  S.bpm = clamp(plan.bpm, 60, 180);
+  S.bpm = clamp(plan.bpm, 40, 180);
   const rate = lineRate(info.avg, S.bpm, S.bpl);
-  if (rate > 4.6 || rate < 2.2) S.bpm = Math.round(Math.max(60, Math.min(180, 240 * S.bpl * TARGET_RATE / Math.max(info.avg, 1))));
+  if (rate > 3.8 || rate < 1.8) S.bpm = Math.round(Math.max(40, Math.min(180, 240 * S.bpl * TARGET_RATE / Math.max(info.avg, 1))));
   const ri = NOTE.indexOf(plan.root); if (ri >= 0) S.root = 28 + ((ri - 4 + 12) % 12);
 }
 async function generate(fresh) {
@@ -732,7 +735,7 @@ async function restoreUserSamples() {
   renderSounds();
 }
 function audition(inst) {
-  const c = ensureCtx(); c.resume();
+  unlockAudio(); const c = ensureCtx();
   if (inst === 'bass') playInst(c, S.mix, S.nb, c.currentTime, 'bass', S.root, 0.6);
   else if (PITCHED.includes(inst)) playNote(c, S.mix, c.currentTime, inst, 60, 1.2, 0.3);
   else playInst(c, S.mix, S.nb, c.currentTime, inst);
@@ -785,6 +788,7 @@ function makeMix(ctx) {
   const lim = ctx.createDynamicsCompressor();
   lim.threshold.value = -3; lim.ratio.value = 20; lim.attack.value = 0.001; lim.release.value = 0.08; lim.knee.value = 0;
   master.connect(hp); hp.connect(comp); comp.connect(lim); lim.connect(ctx.destination);
+  m.out = lim;
   const bus = () => { const g = ctx.createGain(); g.connect(master); return g; };
   m.drums = bus(); m.lead = bus();
   m.duck = bus(); // chords + 808 pass through this gain, which the kick dips (sidechain feel)
@@ -899,11 +903,35 @@ function playStep(c, m, nb, t, bar, step, stepDur) {
 const stepTime = (i, stepDur) => i * stepDur + (i % 2 ? S.swing / 100 * stepDur / 3 : 0);
 
 /* ---------- transport ---------- */
+/* iOS only lets Web Audio start inside a tap, and mutes it when the ringer switch is on silent
+   unless an <audio> element is playing. Run this synchronously at the top of every tap. */
+let silentEl = null;
+function unlockAudio() {
+  const c = ensureCtx();
+  if (c.state !== 'running') c.resume();
+  try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
+  if (!silentEl) {
+    const sr = 8000, n = sr, buf = new Uint8Array(44 + n), v = new DataView(buf.buffer);
+    const w = (o, t) => [...t].forEach((ch, i) => v.setUint8(o + i, ch.charCodeAt(0)));
+    w(0, 'RIFF'); v.setUint32(4, 36 + n, true); w(8, 'WAVEfmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, sr, true); v.setUint32(28, sr, true); v.setUint16(32, 1, true); v.setUint16(34, 8, true); w(36, 'data'); v.setUint32(40, n, true);
+    buf.fill(128, 44);
+    silentEl = document.createElement('audio');
+    silentEl.src = URL.createObjectURL(new Blob([buf], {type: 'audio/wav'}));
+    silentEl.loop = true; silentEl.setAttribute('playsinline', ''); silentEl.preload = 'auto';
+  }
+  silentEl.play().catch(() => {});
+  const b = c.createBuffer(1, 1, 22050), src = c.createBufferSource();
+  src.buffer = b; src.connect(c.destination); src.start(0);
+}
+['touchend', 'click'].forEach(ev => document.addEventListener(ev, () => { if (!S.ctx || S.ctx.state !== 'running') unlockAudio(); }, true));
+
 function ensureCtx() {
   if (!S.ctx) {
     S.ctx = new (window.AudioContext || window.webkitAudioContext)();
     S.nb = noiseBuf(S.ctx);
     S.mix = makeMix(S.ctx);
+    S.analyser = S.ctx.createAnalyser(); S.analyser.fftSize = 512; S.mix.out.connect(S.analyser);
   }
   return S.ctx;
 }
@@ -918,12 +946,15 @@ function tick() {
   }
 }
 async function start() {
+  unlockAudio(); // synchronous, inside the tap
   if (!S.bars.length) await generate(false);
   await Promise.all([S.kitReady, S.instReady]);
   const c = ensureCtx(); c.resume();
   S.step = S.sel * STEPS; S.next = c.currentTime + 0.05; S.playing = true;
   S.timer = setInterval(tick, 25);
   $('#play').textContent = '■ Stop';
+  setStatus('Playing. No sound? Turn the silent switch off and the volume up.');
+  setTimeout(() => { if (S.playing && S.ctx.state !== 'running') setStatus('Audio is blocked by the phone. Tap Play again.', true); }, 600);
   requestAnimationFrame(anim);
 }
 function stop() {
@@ -951,8 +982,16 @@ function karaoke(bi, si) {
   const p = ((bi - first) * STEPS + si) / (STEPS * span);
   kWords.forEach((x, i) => { const next = kWords[i + 1] ? kWords[i + 1].at : 1.01; x.sp.className = p >= x.at ? (p < next ? 'on now' : 'on') : ''; });
 }
+const meterBuf = new Uint8Array(512);
+function drawMeter() {
+  if (!S.analyser) return;
+  S.analyser.getByteTimeDomainData(meterBuf);
+  let pk = 0; for (const x of meterBuf) pk = Math.max(pk, Math.abs(x - 128));
+  $('#meter i').style.width = Math.min(100, pk / 128 * 140) + '%';
+}
 function anim() {
-  if (!S.playing) return;
+  if (!S.playing) { $('#meter i').style.width = '0'; return; }
+  drawMeter();
   while (S.queue.length && S.queue[0].t <= S.ctx.currentTime) {
     const q = S.queue.shift();
     if (q.bi !== S.sel) { S.sel = q.bi; renderGrid(); renderLines(); }
@@ -1045,6 +1084,8 @@ $('#genre').onchange = e => {
   syncControls(); build();
 };
 $('#bpm').oninput = e => { S.bpm = +e.target.value; $('#bpmv').textContent = S.bpm; if (S.info) renderChips(); scheduleSave(); };
+const nudge = d => { S.bpm = Math.max(40, Math.min(180, S.bpm + d)); syncControls(); $('#bpmv').textContent = S.bpm; if (S.info) renderChips(); scheduleSave(); };
+$('#bpmdn').onclick = () => nudge(-5); $('#bpmup').onclick = () => nudge(5);
 $('#swing').oninput = e => { S.swing = +e.target.value; scheduleSave(); };
 $('#lines').onclick = e => {
   const ln = e.target.closest('.ln'); if (!ln) return;
@@ -1059,7 +1100,7 @@ $('#seq').onclick = e => {
   else bar[t][s] = bar[t][s] ? 0 : 0.85;
   renderGrid(); scheduleSave();
   if (!S.playing) {
-    const x = ensureCtx(); x.resume();
+    unlockAudio(); const x = ensureCtx();
     const pv = {seed: bar.seed, kick: [], snare: [], clap: [], hat: [], ohat: [], bass: Array(16).fill(-1), chords: Array(16).fill(0), lead: Array(16).fill(-1), chord: bar.chord};
     const on = t === 'bass' ? bar.bass[s] >= 0 : t === 'lead' ? bar.lead[s] >= 0 : bar[t][s];
     if (!on) return;
