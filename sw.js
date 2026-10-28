@@ -1,5 +1,6 @@
-const CACHE = 'beat-maker-v1';
-const ASSETS = ['./', 'index.html', 'manifest.json', 'icon.svg', 'icon-192.png', 'icon-512.png', 'icon-180.png'];
+const CACHE = 'beat-maker-v2';
+const ASSETS = ['./', 'index.html', 'manifest.json', 'icon.svg', 'icon-192.png', 'icon-512.png', 'icon-180.png',
+  ...['trap', 'boombap', 'pop', 'lofi', 'latin'].flatMap(k => ['kick', 'snare', 'clap', 'hat', 'ohat', 'bass'].map(i => `samples/${k}/${i}.wav`))];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));

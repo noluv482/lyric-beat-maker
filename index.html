@@ -52,6 +52,10 @@ dialog input[type=password],dialog input[type=text]{width:100%;background:#0b0c1
 #status{font-size:13px;color:var(--mut)}
 #status.err{color:#ffb4a2}
 #summary{margin:0 0 10px;color:var(--mut);font-size:13px}
+.snd{display:grid;grid-template-columns:70px 1fr auto auto auto;gap:8px;align-items:center;padding:6px 0;border-top:1px solid var(--line);font-size:14px}
+.snd .fn{color:var(--mut);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.snd button,.snd select{padding:5px 10px;font-size:13px}
+.snd input[type=file]{display:none}
 .hint{color:var(--mut);font-size:13px;margin:6px 0 0}
 </style>
 </head>
@@ -87,6 +91,16 @@ dialog input[type=password],dialog input[type=text]{width:100%;background:#0b0c1
   <div id="barlabel" class="hint"></div>
   <div class="seq" id="seq"></div>
   <p class="hint">Click cells to edit the selected bar. Click a lyric line to pick a bar.</p>
+</section>
+
+<section class="card" style="margin-top:14px">
+  <div class="row" style="margin:0 0 8px">
+    <b>Sounds</b>
+    <select id="kit"></select>
+    <span id="kitstat" class="hint" style="margin:0"></span>
+  </div>
+  <div id="snds"></div>
+  <p class="hint">Load your own samples (wav, mp3, m4a). They are saved on this device. The 808 plays at the pitch you set as its root note.</p>
 </section>
 </main>
 
@@ -271,6 +285,7 @@ function build(keepGenre) {
   const rng = rngFrom(S.seed);
   S.bars = S.info.lines.map((l, i) => makeBar(S.genre, l, rng, i, S.info.lines.length, S.info.plan && S.info.plan[i]));
   S.sel = Math.min(S.sel, S.bars.length - 1);
+  applyKit();
   renderAll();
 }
 function setStatus(t, err) { $('#status').textContent = t; $('#status').className = err ? 'err' : ''; }
@@ -344,13 +359,132 @@ const V = {
     o.connect(g); g.connect(d); o.start(t); o.stop(t + dur + 0.02);
   },
 };
+/* ---------- sampler: built-in kits + user samples ---------- */
+const KIT_FOR = {trap: 'trap', boombap: 'boombap', pop: 'pop', lofi: 'lofi', reggaeton: 'latin'};
+const KITS = ['trap', 'boombap', 'pop', 'lofi', 'latin'];
+const GAIN = {kick: 0.8, snare: 0.6, clap: 0.5, hat: 0.35, ohat: 0.35, bass: 0.55};
+const KIT_ROOT = 33; // built-in 808 samples are rendered at A1
+S.kitBufs = {}; S.userBufs = {}; S.userNames = {}; S.kitName = null; S.kitReady = Promise.resolve();
+S.bassRoot = (() => { try { return +localStorage.getItem('bassRoot') || KIT_ROOT; } catch (e) { return KIT_ROOT; } })();
+S.kitChoice = (() => { try { return localStorage.getItem('kit') || 'auto'; } catch (e) { return 'auto'; } })();
+const decode = ab => new OfflineAudioContext(1, 1, 44100).decodeAudioData(ab);
+function normBuf(buf) {
+  let pk = 0;
+  for (let ch = 0; ch < buf.numberOfChannels; ch++) for (const x of buf.getChannelData(ch)) pk = Math.max(pk, Math.abs(x));
+  buf.norm = pk > 0.001 ? Math.min(4, 0.89 / pk) : 1;
+  return buf;
+}
+const bufFor = inst => S.userBufs[inst] || S.kitBufs[inst] || null;
+
+function loadKit(name) {
+  S.kitName = name; S.kitBufs = {};
+  $('#kitstat').textContent = 'loading…';
+  S.kitReady = Promise.all(TRACKS.map(async t => {
+    try {
+      const r = await fetch(`samples/${name}/${t}.wav`);
+      if (r.ok) S.kitBufs[t] = await decode(await r.arrayBuffer());
+    } catch (e) { /* falls back to synth voice */ }
+  })).then(() => {
+    const n = Object.keys(S.kitBufs).length;
+    $('#kitstat').textContent = n === TRACKS.length ? '' : n ? 'some sounds missing, using synth for them' : 'samples not found, using synth';
+  });
+  return S.kitReady;
+}
+function applyKit() {
+  const name = S.kitChoice === 'auto' ? KIT_FOR[S.genre] : S.kitChoice;
+  if (name && name !== S.kitName) loadKit(name);
+}
+
+/* user samples persist in IndexedDB */
+const idb = () => new Promise((res, rej) => {
+  const r = indexedDB.open('beatmaker', 1);
+  r.onupgradeneeded = () => r.result.createObjectStore('samples');
+  r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+});
+async function idbDo(mode, fn) {
+  try {
+    const db = await idb();
+    return await new Promise((res, rej) => { const tx = db.transaction('samples', mode); const rq = fn(tx.objectStore('samples')); tx.oncomplete = () => res(rq && rq.result); tx.onerror = () => rej(tx.error); });
+  } catch (e) { return null; }
+}
+async function setUserSample(inst, ab, name) {
+  S.userBufs[inst] = normBuf(await decode(ab.slice(0)));
+  S.userNames[inst] = name;
+  idbDo('readwrite', st => st.put({ab, name}, inst));
+  renderSounds();
+}
+async function clearUserSample(inst) {
+  delete S.userBufs[inst]; delete S.userNames[inst];
+  idbDo('readwrite', st => st.delete(inst));
+  renderSounds();
+}
+async function restoreUserSamples() {
+  for (const t of TRACKS) {
+    const rec = await idbDo('readonly', st => st.get(t));
+    if (rec && rec.ab) { try { S.userBufs[t] = normBuf(await decode(rec.ab.slice(0))); S.userNames[t] = rec.name; } catch (e) {} }
+  }
+  renderSounds();
+}
+function audition(inst) {
+  const c = ensureCtx(); c.resume();
+  if (inst === 'bass') playInst(c, S.out, S.nb, c.currentTime, 'bass', S.root, 0.6);
+  else playInst(c, S.out, S.nb, c.currentTime, inst);
+}
+function renderSounds() {
+  $('#snds').innerHTML = TRACKS.map(t => `<div class="snd" data-t="${t}">
+    <span>${LABEL[t]}</span><span class="fn"></span>
+    ${t === 'bass' ? '<select class="root" title="Root note of your 808 sample"></select>' : '<span></span>'}
+    <button class="pl">▶</button>
+    <span style="display:flex;gap:6px"><button class="ld">Load</button><input type="file" accept="audio/*"><button class="rs">Reset</button></span>
+  </div>`).join('');
+  document.querySelectorAll('.snd').forEach(row => {
+    const t = row.dataset.t;
+    row.querySelector('.fn').textContent = S.userNames[t] || 'built-in';
+    row.querySelector('.rs').style.visibility = S.userBufs[t] ? 'visible' : 'hidden';
+    row.querySelector('.pl').onclick = () => audition(t);
+    const inp = row.querySelector('input[type=file]');
+    row.querySelector('.ld').onclick = () => inp.click();
+    inp.onchange = async () => {
+      const f = inp.files[0]; if (!f) return;
+      try {
+        const ab = await f.arrayBuffer();
+        const buf = await decode(ab.slice(0));
+        if (buf.duration > 10) throw new Error('longer than 10 seconds');
+        await setUserSample(t, ab, f.name);
+      } catch (e) { setStatus('Could not load ' + f.name + ': ' + e.message, true); }
+    };
+    row.querySelector('.rs').onclick = () => clearUserSample(t);
+    const sel = row.querySelector('.root');
+    if (sel) {
+      for (let m = 24; m <= 47; m++) sel.add(new Option(NOTE[m % 12] + (Math.floor(m / 12) - 1), m));
+      sel.value = S.bassRoot;
+      sel.onchange = () => { S.bassRoot = +sel.value; try { localStorage.setItem('bassRoot', sel.value); } catch (e) {} };
+    }
+  });
+}
+
+function sampleVoice(c, d, t, buf, gain, rate, dur) {
+  const src = c.createBufferSource(); src.buffer = buf; src.playbackRate.value = rate;
+  const g = c.createGain(); g.gain.setValueAtTime(gain, t);
+  if (dur) { g.gain.setValueAtTime(gain, Math.max(t, t + dur - 0.04)); g.gain.linearRampToValueAtTime(0, t + dur); }
+  src.connect(g); g.connect(d); src.start(t);
+  if (dur) src.stop(t + dur + 0.01);
+}
+function playInst(c, d, nb, t, inst, midi, dur) {
+  const buf = bufFor(inst);
+  if (buf) {
+    const root = S.userBufs.bass && inst === 'bass' ? S.bassRoot : KIT_ROOT;
+    return sampleVoice(c, d, t, buf, GAIN[inst] * (buf.norm || 1), inst === 'bass' ? Math.pow(2, (midi - root) / 12) : 1, inst === 'bass' ? dur : 0);
+  }
+  if (inst === 'bass') return V.bass(c, d, t, midi, dur);
+  V[inst](c, d, t, nb);
+}
 function playStep(c, d, nb, t, bar, step, stepDur) {
-  if (bar.kick[step]) V.kick(c, d, t);
-  if (bar.snare[step]) V.snare(c, d, t, nb);
-  if (bar.clap[step]) V.clap(c, d, t, nb);
-  if (bar.hat[step]) V.hat(c, d, t, nb);
-  if (bar.ohat[step]) V.ohat(c, d, t, nb);
-  if (bar.bass[step] >= 0) V.bass(c, d, t, S.root + bar.bass[step], stepDur * 3);
+  for (const inst of ['kick', 'snare', 'clap', 'hat', 'ohat']) if (bar[inst][step]) playInst(c, d, nb, t, inst);
+  if (bar.bass[step] >= 0) {
+    let n = 1; while (step + n < STEPS && bar.bass[step + n] < 0 && n < 4) n++;
+    playInst(c, d, nb, t, 'bass', S.root + bar.bass[step], stepDur * n);
+  }
 }
 const stepTime = (i, stepDur) => i * stepDur + (i % 2 ? S.swing / 100 * stepDur / 3 : 0);
 
@@ -359,7 +493,7 @@ function ensureCtx() {
   if (!S.ctx) {
     S.ctx = new (window.AudioContext || window.webkitAudioContext)();
     S.nb = noiseBuf(S.ctx);
-    S.out = S.ctx.createGain(); S.out.gain.value = 0.8;
+    S.out = S.ctx.createGain(); S.out.gain.value = 0.55;
     const comp = S.ctx.createDynamicsCompressor();
     S.out.connect(comp); comp.connect(S.ctx.destination);
   }
@@ -375,8 +509,9 @@ function tick() {
     S.next += stepDur; S.step++;
   }
 }
-function start() {
-  if (!S.bars.length) generate(false);
+async function start() {
+  if (!S.bars.length) await generate(false);
+  await S.kitReady;
   const c = ensureCtx(); c.resume();
   S.step = S.sel * STEPS; S.next = c.currentTime + 0.05; S.playing = true;
   S.timer = setInterval(tick, 25);
@@ -404,11 +539,13 @@ function anim() {
 
 /* ---------- WAV export ---------- */
 async function exportWav() {
-  if (!S.bars.length) generate(false);
+  if (!S.bars.length) await generate(false);
+  await S.kitReady;
   const stepDur = 60 / S.bpm / 4, loops = 2, total = S.bars.length * STEPS * loops;
   const sr = 44100, len = Math.ceil((total * stepDur + 2) * sr);
   const oc = new OfflineAudioContext(1, len, sr), nb = noiseBuf(oc);
-  const out = oc.createGain(); out.gain.value = 0.8; out.connect(oc.destination);
+  const out = oc.createGain(); out.gain.value = 0.55;
+  const comp = oc.createDynamicsCompressor(); out.connect(comp); comp.connect(oc.destination);
   for (let i = 0; i < total; i++) {
     const si = i % STEPS, bi = Math.floor(i / STEPS) % S.bars.length;
     playStep(oc, out, nb, 0.05 + stepTime(i, stepDur), S.bars[bi], si, stepDur);
@@ -476,6 +613,12 @@ $('#seq').onclick = e => {
   c.classList.toggle('on');
   if (!S.playing) { const x = ensureCtx(); x.resume(); playStep(x, S.out, S.nb, x.currentTime, {kick: [], snare: [], clap: [], hat: [], ohat: [], bass: Array(16).fill(-1), [t]: Object.assign(Array(16).fill(t === 'bass' ? -1 : 0), {[s]: t === 'bass' ? 0 : 1})}, s, 60 / S.bpm / 4); }
 };
+$('#kit').add(new Option('Kit: auto (follows genre)', 'auto'));
+KITS.forEach(k => $('#kit').add(new Option('Kit: ' + k, k)));
+$('#kit').value = S.kitChoice;
+$('#kit').onchange = e => { S.kitChoice = e.target.value; try { localStorage.setItem('kit', S.kitChoice); } catch (x) {} if (S.info) applyKit(); else { const n = S.kitChoice === 'auto' ? 'boombap' : S.kitChoice; if (n !== S.kitName) loadKit(n); } };
+renderSounds(); restoreUserSamples();
+loadKit(S.kitChoice === 'auto' ? 'boombap' : S.kitChoice);
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 </script>
 </body>
