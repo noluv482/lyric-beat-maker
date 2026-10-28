@@ -121,8 +121,9 @@ dialog input[type=password],dialog input[type=text]{width:100%;background:#0b0c1
   <label style="display:block">Anthropic API key</label>
   <input type="password" id="apikey" placeholder="sk-ant-..." autocomplete="off">
   <label><input type="checkbox" id="useai" checked> Use Claude to analyze lyrics</label>
+  <p id="keystat" class="hint"></p>
   <p class="hint">The key is stored only on this device and sent only to api.anthropic.com. Without a key the app uses offline rules.</p>
-  <div class="row"><button class="pri" id="savekey">Save</button><button id="closekey">Close</button></div>
+  <div class="row"><button class="pri" id="savekey">Save</button><button id="closekey">Close</button><button id="rmkey">Remove key</button></div>
 </dialog>
 
 <script>
@@ -213,8 +214,19 @@ function analyze(raw) {
 /* ---------- Claude analysis ---------- */
 const NOTE = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 const MODEL = 'claude-opus-5-5';
-const getKey = () => { try { return localStorage.getItem('apiKey') || ''; } catch (e) { return ''; } };
-const useAI = () => { try { return localStorage.getItem('useAI') !== '0'; } catch (e) { return true; } };
+/* ---------- persistence: localStorage, mirrored into IndexedDB ---------- */
+const lsGet = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+function save(k, v) { try { localStorage.setItem(k, v); } catch (e) {} idbDo('readwrite', st => st.put(v, k), 'kv'); }
+const MIRRORED = ['apiKey', 'useAI', 'kit', 'chordSound', 'mute', 'roots', 'lyrics', 'project'];
+async function restoreMirror() {
+  for (const k of MIRRORED) {
+    if (lsGet(k) !== null) continue;
+    const v = await idbDo('readonly', st => st.get(k), 'kv');
+    if (v != null) { try { localStorage.setItem(k, v); } catch (e) {} }
+  }
+}
+const getKey = () => lsGet('apiKey') || '';
+const useAI = () => lsGet('useAI') !== '0';
 const planSchema = () => ({
   type: 'object', additionalProperties: false,
   required: ['language', 'genre', 'bpm', 'root', 'minor', 'swing', 'mood', 'energy', 'summary', 'lines'],
@@ -379,6 +391,7 @@ function build(keepGenre) {
   S.sel = Math.min(S.sel, S.bars.length - 1);
   applyKit();
   renderAll();
+  scheduleSave();
 }
 function setStatus(t, err) { $('#status').textContent = t; $('#status').className = err ? 'err' : ''; }
 async function generate(fresh) {
@@ -499,14 +512,14 @@ function applyKit() {
 
 /* user samples persist in IndexedDB */
 const idb = () => new Promise((res, rej) => {
-  const r = indexedDB.open('beatmaker', 1);
-  r.onupgradeneeded = () => r.result.createObjectStore('samples');
+  const r = indexedDB.open('beatmaker', 2);
+  r.onupgradeneeded = () => { for (const n of ['samples', 'kv']) if (!r.result.objectStoreNames.contains(n)) r.result.createObjectStore(n); };
   r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
 });
-async function idbDo(mode, fn) {
+async function idbDo(mode, fn, store = 'samples') {
   try {
     const db = await idb();
-    return await new Promise((res, rej) => { const tx = db.transaction('samples', mode); const rq = fn(tx.objectStore('samples')); tx.oncomplete = () => res(rq && rq.result); tx.onerror = () => rej(tx.error); });
+    return await new Promise((res, rej) => { const tx = db.transaction(store, mode); const rq = fn(tx.objectStore(store)); tx.oncomplete = () => res(rq && rq.result); tx.onerror = () => rej(tx.error); });
   } catch (e) { return null; }
 }
 async function setUserSample(inst, ab, name) {
@@ -561,7 +574,7 @@ function renderSounds() {
     if (sel) {
       for (let m = t === 'bass' ? 24 : 36; m <= (t === 'bass' ? 47 : 84); m++) sel.add(new Option(noteName(m), m));
       sel.value = S.roots[t];
-      sel.onchange = () => { S.roots[t] = +sel.value; try { localStorage.setItem('roots', JSON.stringify(S.roots)); } catch (e) {} };
+      sel.onchange = () => { S.roots[t] = +sel.value; save('roots', JSON.stringify(S.roots)); };
     }
   });
 }
@@ -719,9 +732,17 @@ function renderAll() {
 
 /* ---------- events ---------- */
 $('#gen').onclick = () => generate(false);
-$('#gear').onclick = () => { $('#apikey').value = getKey(); $('#useai').checked = useAI(); $('#settings').showModal(); };
+function keyStat() { const k = getKey(); $('#keystat').textContent = k ? `Saved on this device: ${k.slice(0, 7)}…${k.slice(-4)}` : 'No key saved yet.'; }
+$('#gear').onclick = () => { $('#apikey').value = ''; $('#apikey').placeholder = getKey() ? 'Key saved (leave empty to keep it)' : 'sk-ant-...'; $('#useai').checked = useAI(); keyStat(); $('#settings').showModal(); };
+$('#rmkey').onclick = () => { save('apiKey', ''); keyStat(); setStatus('Key removed.'); };
 $('#closekey').onclick = () => $('#settings').close();
-$('#savekey').onclick = () => { try { localStorage.setItem('apiKey', $('#apikey').value.trim()); localStorage.setItem('useAI', $('#useai').checked ? '1' : '0'); } catch (e) {} $('#settings').close(); setStatus(getKey() ? 'Key saved.' : ''); };
+$('#savekey').onclick = () => {
+  const v = $('#apikey').value.trim();
+  if (v) save('apiKey', v);
+  save('useAI', $('#useai').checked ? '1' : '0');
+  if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
+  $('#settings').close(); setStatus(getKey() ? 'Saved ✓ (stays on this device)' : '');
+};
 $('#regen').onclick = () => { if (!S.info) return generate(true); S.seed = (Math.random() * 4294967295) >>> 0; build(); };
 $('#ex').onclick = () => { $('#lyrics').value = EX; generate(false); };
 $('#play').onclick = () => S.playing ? stop() : start();
@@ -731,8 +752,8 @@ $('#genre').onchange = e => {
   S.genre = e.target.value; S.minor = GENRES[S.genre].minor; S.bpm = GENRES[S.genre].bpm; S.swing = GENRES[S.genre].swing;
   $('#bpm').value = S.bpm; $('#swing').value = S.swing; build();
 };
-$('#bpm').oninput = e => { S.bpm = +e.target.value; $('#bpmv').textContent = S.bpm; if (S.info) renderChips(); };
-$('#swing').oninput = e => S.swing = +e.target.value;
+$('#bpm').oninput = e => { S.bpm = +e.target.value; $('#bpmv').textContent = S.bpm; if (S.info) renderChips(); scheduleSave(); };
+$('#swing').oninput = e => { S.swing = +e.target.value; scheduleSave(); };
 $('#lines').onclick = e => {
   const ln = e.target.closest('.ln'); if (!ln) return;
   S.sel = +ln.dataset.i; renderLines(); renderGrid();
@@ -744,7 +765,7 @@ $('#seq').onclick = e => {
   if (t === 'bass') bar.bass[s] = bar.bass[s] >= 0 ? -1 : 0;
   else if (t === 'lead') bar.lead[s] = bar.lead[s] >= 0 ? -1 : bar.chord.tone;
   else bar[t][s] = 1 - bar[t][s];
-  renderGrid();
+  renderGrid(); scheduleSave();
   if (!S.playing) {
     const x = ensureCtx(); x.resume();
     const pv = {kick: [], snare: [], clap: [], hat: [], ohat: [], bass: Array(16).fill(-1), chords: Array(16).fill(0), lead: Array(16).fill(-1), chord: bar.chord};
@@ -758,13 +779,48 @@ $('#seq').onclick = e => {
 $('#kit').add(new Option('Kit: auto (follows genre)', 'auto'));
 KITS.forEach(k => $('#kit').add(new Option('Kit: ' + k, k)));
 $('#kit').value = S.kitChoice;
-$('#kit').onchange = e => { S.kitChoice = e.target.value; try { localStorage.setItem('kit', S.kitChoice); } catch (x) {} if (S.info) applyKit(); else { const n = S.kitChoice === 'auto' ? 'boombap' : S.kitChoice; if (n !== S.kitName) loadKit(n); } };
-$('#mChords').onchange = e => S.mute.chords = !e.target.checked;
-$('#mLead').onchange = e => S.mute.lead = !e.target.checked;
-$('#chordSnd').onchange = e => { S.chordSound = e.target.value; if (S.info) build(); };
+$('#kit').onchange = e => { S.kitChoice = e.target.value; save('kit', S.kitChoice); if (S.info) applyKit(); else { const n = S.kitChoice === 'auto' ? 'boombap' : S.kitChoice; if (n !== S.kitName) loadKit(n); } };
+$('#mChords').onchange = e => { S.mute.chords = !e.target.checked; save('mute', JSON.stringify(S.mute)); };
+$('#mLead').onchange = e => { S.mute.lead = !e.target.checked; save('mute', JSON.stringify(S.mute)); };
+$('#chordSnd').onchange = e => { S.chordSound = e.target.value; save('chordSound', S.chordSound); if (S.info) build(); };
 $('#newMel').onclick = () => { if (!S.info) return; S.melSeed = (Math.random() * 4294967295) >>> 0; build(); };
-renderSounds(); restoreUserSamples(); loadInstruments();
-loadKit(S.kitChoice === 'auto' ? 'boombap' : S.kitChoice);
+let saveT;
+function scheduleSave() { clearTimeout(saveT); saveT = setTimeout(saveProject, 400); }
+function saveProject() {
+  if (!S.info || !S.bars.length) return;
+  save('project', JSON.stringify({v: 1, info: S.info, genre: S.genre, bpm: S.bpm, swing: S.swing, minor: S.minor, root: S.root, seed: S.seed, melSeed: S.melSeed, lang: S.lang, sel: S.sel, bars: S.bars}));
+}
+function restoreProject() {
+  try {
+    const j = JSON.parse(lsGet('project') || 'null');
+    if (!j || j.v !== 1 || !j.bars || !j.bars.length || !j.bars.every(b => b.chords && b.lead && b.chord)) return;
+    Object.assign(S, {info: j.info, genre: j.genre, bpm: j.bpm, swing: j.swing, minor: j.minor, root: j.root, seed: j.seed, melSeed: j.melSeed, lang: j.lang, bars: j.bars, sel: Math.min(j.sel || 0, j.bars.length - 1)});
+    $('#genre').value = S.genre; $('#bpm').value = S.bpm; $('#swing').value = S.swing;
+    applyKit(); renderAll();
+  } catch (e) { /* ignore a corrupt save */ }
+}
+function applyPrefs() {
+  if (lsGet('kit')) S.kitChoice = lsGet('kit');
+  $('#kit').value = S.kitChoice;
+  if (lsGet('chordSound')) S.chordSound = lsGet('chordSound');
+  $('#chordSnd').value = S.chordSound;
+  try { const m = JSON.parse(lsGet('mute') || 'null'); if (m) S.mute = m; } catch (e) {}
+  $('#mChords').checked = !S.mute.chords; $('#mLead').checked = !S.mute.lead;
+  try { Object.assign(S.roots, JSON.parse(lsGet('roots') || '{}')); } catch (e) {}
+  if (lsGet('lyrics') && !$('#lyrics').value) $('#lyrics').value = lsGet('lyrics');
+}
+let lyT;
+$('#lyrics').addEventListener('input', () => { clearTimeout(lyT); lyT = setTimeout(() => save('lyrics', $('#lyrics').value), 500); });
+async function boot() {
+  if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
+  await restoreMirror();
+  applyPrefs();
+  renderSounds(); restoreUserSamples(); loadInstruments();
+  loadKit(S.kitChoice === 'auto' ? 'boombap' : S.kitChoice);
+  restoreProject();
+  if (getKey()) setStatus('');
+}
+boot();
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 </script>
 </body>
