@@ -162,10 +162,10 @@ dialog input[type=password],dialog input[type=text]{width:100%;background:#0b0c1
 <script>
 const $ = s => document.querySelector(s);
 const TRACKS = ['kick', 'snare', 'clap', 'hat', 'ohat', 'bass'];
-const LABEL = {kick: 'Kick', snare: 'Snare', clap: 'Clap', hat: 'Hat', ohat: 'Open hat', bass: '808', chords: 'Chords', lead: 'Lead', keys: 'Keys', pad: 'Pad', crash: 'Crash', riser: 'Riser'};
+const LABEL = {kick: 'Kick', snare: 'Snare', clap: 'Clap', hat: 'Hat', ohat: 'Open hat', bass: '808', chords: 'Chords', lead: 'Lead', bell: 'Bell', keys: 'Keys', pad: 'Pad', crash: 'Crash', riser: 'Riser'};
 const GRID_ROWS = [...TRACKS, 'chords', 'lead', 'crash', 'riser'];
-const SOUND_ROWS = [...TRACKS, 'keys', 'pad', 'lead', 'crash', 'riser'];
-const PITCHED = ['bass', 'keys', 'pad', 'lead'];
+const SOUND_ROWS = [...TRACKS, 'keys', 'pad', 'lead', 'bell', 'crash', 'riser'];
+const PITCHED = ['bass', 'keys', 'pad', 'lead', 'bell'];
 const EX = `I woke up in the city lights, chasing every dream tonight
 Money on my mind, but the love is hard to find
 Running through the fire, never looking back
@@ -182,6 +182,7 @@ const GENRES = {
   reggaeton: {bpm: 95,  swing: 0,  kick: '1000100010001000', snare: '0001001000010010', clap: '0000000000000000', hat: '1010101010101010', ohat: '0000000000000000', minor: true},
   drill:     {bpm: 142, swing: 0,  kick: '1000000100100100', snare: '0000000010000000', clap: '0000000010000000', hat: '1011101110111011', ohat: '0000000000000010', minor: true},
   rnb:       {bpm: 72,  swing: 30, kick: '1000000100100000', snare: '0000100000001000', clap: '0000100000001000', hat: '0010001000100010', ohat: '0000000000000000', minor: true},
+  dominican: {bpm: 104, swing: 0, kick: '1000100010001010', snare: '0001001000010010', clap: '0000000010000000', hat: '1011101110111011', ohat: '0000000000100000', minor: true},
   trapdembow: {bpm: 92, swing: 0, kick: '1000100010000010', snare: '0001001000010010', clap: '0000000000000000', hat: '1011101110111011', ohat: '0000000000000010', minor: true},
   dembow:    {bpm: 116, swing: 0, kick: '1000100010001000', snare: '0001001000010010', clap: '0000000000000000', hat: '0010001000100010', ohat: '0000100000001000', minor: true},
   afrobeats: {bpm: 102, swing: 12, kick: '1000001000100010', snare: '0000100000001000', clap: '0000100100001001', hat: '1011101110111011', ohat: '0010000000100000', minor: false},
@@ -193,13 +194,15 @@ const STYLES = [
   ['lofi', 'Lo-fi', 'Slow, soft and dusty with mellow chords'],
   ['rnb', 'R&B', 'Smooth and slow, warm chords, laid-back groove'],
   ['pop', 'Pop', 'Bright, clean and catchy with a steady backbeat'],
+  ['dominican', 'Dominican trap', 'Booming 808s, dembow snare, trap hat rolls, dark bells'],
   ['trapdembow', 'Trap dembow', 'Dembow snare pattern with trap hats and sliding 808s'],
   ['dembow', 'Dembow', 'Fast Caribbean dembow: kick on every beat, tun-ka snare'],
   ['reggaeton', 'Reggaeton', 'Dembow rhythm with a Latin feel'],
   ['afrobeats', 'Afrobeats', 'Bouncy shaker groove, warm and danceable'],
 ];
 const GENRE_NAME = Object.fromEntries(STYLES.map(x => [x[0], x[1]]));
-const TRAPLIKE = ['trap', 'drill', 'trapdembow'];
+const TRAPLIKE = ['trap', 'drill', 'trapdembow', 'dominican'];
+const ROLLY = TRAPLIKE;
 for (const [k, name] of STYLES) $('#genre').add(new Option(name, k));
 
 const MOODS = {
@@ -302,7 +305,7 @@ const planSchema = () => ({
 });
 const SYSTEM = `You are an expert hip-hop / pop / latin music producer. The user gives song lyrics (English, Spanish or mixed), one line per bar, numbered. Design the full beat that fits them.
 TIMING MATTERS MOST: the lyrics are performed live over this beat, so the beat must not outrun the words. A comfortable rap or sung rate is 2.5 to 3.5 syllables per second, slower than you would think. Each lyric line spans bars_per_line bars (1 or 2); choose bars_per_line and the BPM so that (syllables in a typical line) / (bars_per_line * 240 / BPM) lands between 2.5 and 3.5. Lines over about 10 syllables usually need 2 bars; a fast trap tempo with 2 bars per line is normal. Never pick a tempo that makes the lyrics rushed.
-Genres: trap (hard 808s, rolling hats, half-time snare), drill (dark, sliding 808s, sparse snare, stuttering hats), boombap (punchy kick, snare on 2 and 4, dusty), lofi (slow, soft, mellow), rnb (smooth, slow, warm chords), pop (bright, clean, steady backbeat), reggaeton (dembow, Latin), trapdembow (dembow snare pattern with trap hats and sliding 808s), dembow (fast Caribbean dembow, kick on every beat), afrobeats (bouncy shaker groove).
+Genres: trap (hard 808s, rolling hats, half-time snare), drill (dark, sliding 808s, sparse snare, stuttering hats), boombap (punchy kick, snare on 2 and 4, dusty), lofi (slow, soft, mellow), rnb (smooth, slow, warm chords), pop (bright, clean, steady backbeat), reggaeton (dembow, Latin), dominican (Dominican trap: booming distorted 808 with slides, dembow tun-ka snare, trap hi-hat rolls, dark minor bell melody, big silences before the hook), trapdembow (dembow snare pattern with trap hats and sliding 808s), dembow (fast Caribbean dembow, kick on every beat), afrobeats (bouncy shaker groove).
 Song level: the genre (pick the closest), BPM (60-180), the key (root note + minor/major), swing 0-60, a one-or-two word mood, energy 1-10, and a short summary (max 25 words) of why this beat fits.
 For EACH line, in order (a bar is 4/4 with 16 sixteenth-note steps; step 0 is beat 1, 4 is beat 2, 8 is beat 3, 12 is beat 4). When bars_per_line is 2, a line spans two bars, so stress_steps and melody steps run 0-31 across both bars, drums and chord_degree describe the FIRST bar (the app varies the second bar itself), and chord_degree_b is the chord for the second bar (repeat chord_degree for 1-bar lines):
 - stress_steps: steps (at most 12) where the emphasized syllables fall when the line is performed, spread evenly across the whole span.
@@ -344,7 +347,7 @@ const clamp = (v, a, b) => Math.max(a, Math.min(b, Math.round(+v) || a));
 const STEPS = 16;
 const parse = s => [...s].map(Number);
 /* ---------- tempo: fit the beat to how fast the lyrics can be performed ---------- */
-const TEMPO_RANGE = {trap: [110, 150], drill: [128, 146], boombap: [60, 98], pop: [72, 124], lofi: [56, 88], reggaeton: [70, 102], rnb: [58, 86], afrobeats: [84, 112], trapdembow: [84, 104], dembow: [100, 124]};
+const TEMPO_RANGE = {trap: [110, 150], drill: [128, 146], boombap: [60, 98], pop: [72, 124], lofi: [56, 88], reggaeton: [70, 102], rnb: [58, 86], afrobeats: [84, 112], trapdembow: [84, 104], dembow: [100, 124], dominican: [92, 125]};
 const TARGET_RATE = 2.8; // syllables per second that feels natural to rap or sing
 const lineRate = (avg, bpm, bpl) => avg / (bpl * 240 / bpm);
 function fitTempo(avg, g, forced) {
@@ -364,11 +367,12 @@ const PROGS = {
   minor: [[1, 6, 3, 7], [1, 4, 6, 5], [1, 7, 6, 7], [1, 6, 4, 5]],
   major: [[1, 5, 6, 4], [1, 4, 5, 4], [6, 4, 1, 5], [1, 6, 4, 5]],
 };
-const COMP = {trap: '1000000000100000', boombap: '1000001010000000', pop: '1000100010001000', lofi: '1000000100100000', reggaeton: '1001001010010010', drill: '1000000000100000', rnb: '1000000010000000', afrobeats: '1001001000100100', trapdembow: '1001001010010010', dembow: '1000100010001000'};
+const COMP = {trap: '1000000000100000', boombap: '1000001010000000', pop: '1000100010001000', lofi: '1000000100100000', reggaeton: '1001001010010010', drill: '1000000000100000', rnb: '1000000010000000', afrobeats: '1001001000100100', trapdembow: '1001001010010010', dembow: '1000100010001000', dominican: '1000000100100000'};
 const SEVENTHS = ['lofi', 'boombap', 'pop', 'rnb'];
 const scaleNote = i => { const sc = SCALES[S.minor ? 'minor' : 'major']; return 12 * Math.floor(i / 7) + sc[((i % 7) + 7) % 7]; };
 const pick = (rng, a) => a[Math.floor(rng() * a.length)];
-const chordInst = () => S.chordSound !== 'auto' ? S.chordSound : (S.genre === 'trap' || S.genre === 'drill' ? 'pad' : 'keys');
+const leadInst = () => S.userBufs.lead && !S.userBufs.bell ? 'lead' : (['dominican', 'trapdembow', 'drill'].includes(S.genre) ? 'bell' : 'lead');
+const chordInst = () => S.chordSound !== 'auto' ? S.chordSound : (S.genre === 'trap' || S.genre === 'drill' || S.genre === 'dominican' ? 'pad' : 'keys');
 const noteName = m => NOTE[m % 12] + (Math.floor(m / 12) - 1);
 
 function chordName(notes, rootPc) {
@@ -439,6 +443,9 @@ function groove(bar, g, rng, skipDrums) {
     }
   }
   if (!skipDrums && (g === 'boombap' || g === 'lofi' || g === 'pop' || g === 'rnb')) for (const gs of [7, 9, 15]) if (!bar.snare[gs] && !bar.kick[gs] && rng() < 0.35) bar.snare[gs] = 0.22 + rng() * 0.12;
+  if (ROLLY.includes(g)) {
+    for (const [st, n, pr] of [[15, 3, 0.6], [14, 2, 0.35], [7, 3, 0.3], [11, 2, 0.25]]) if (rng() < pr) { bar.hat[st] = Math.max(bar.hat[st], 0.6); bar.roll[st] = n; }
+  }
   let first = true;
   bar.chords = bar.chords.map(v => { if (!v) return 0; const r = first ? 1 : 0.75; first = false; return r; });
   if (TRAPLIKE.includes(g) || g === 'reggaeton' || g === 'afrobeats' || g === 'dembow') {
@@ -469,6 +476,12 @@ function applySection(bar, g, sec, rng) {
     for (let i = 8; i < STEPS; i++) bar.hat[i] = 0;
     for (let i = 4; i < STEPS; i++) { bar.bass[i] = -1; bar.slide[i] = 0; }
     bar.riser[0] = 0.8;
+    if (ROLLY.includes(g)) { // stop-time: a short silence so the hook hits harder
+      bar.cut = 14;
+      for (const k of ['kick', 'snare', 'clap', 'hat', 'ohat']) for (let i = 14; i < STEPS; i++) bar[k][i] = 0;
+      for (let i = 14; i < STEPS; i++) { bar.lead[i] = -1; bar.roll[i] = 0; }
+      bar.crash.fill(0);
+    }
   }
   if (sec === 'bridge') {
     clear('kick', 'snare', 'clap', 'ohat');
@@ -502,7 +515,7 @@ function makeBar(g, line, rng, barIdx, nBars, pl, st, o) {
   for (const t of ['kick', 'snare', 'clap', 'hat', 'ohat']) bar[t] = parse(G[t]);
   bar.bass = Array(STEPS).fill(-1);
   bar.slide = Array(STEPS).fill(0);
-  bar.crash = Array(STEPS).fill(0); bar.riser = Array(STEPS).fill(0);
+  bar.crash = Array(STEPS).fill(0); bar.riser = Array(STEPS).fill(0); bar.roll = Array(STEPS).fill(0);
   bar.seed = (rng() * 4294967295) >>> 0;
   const hot = TRAPLIKE.includes(g) ? 0.5 : 0.3;
 
@@ -690,15 +703,15 @@ const V = {
   },
 };
 /* ---------- sampler: built-in kits + user samples ---------- */
-const KIT_FOR = {trap: 'trap', drill: 'trap', boombap: 'boombap', pop: 'pop', rnb: 'pop', lofi: 'lofi', reggaeton: 'latin', afrobeats: 'latin', trapdembow: 'latin', dembow: 'latin'};
-const KITS = ['trap', 'boombap', 'pop', 'lofi', 'latin'];
+const KIT_FOR = {trap: 'trap', drill: 'trap', boombap: 'boombap', pop: 'pop', rnb: 'pop', lofi: 'lofi', reggaeton: 'latin', afrobeats: 'latin', trapdembow: 'dominican', dembow: 'latin', dominican: 'dominican'};
+const KITS = ['trap', 'boombap', 'pop', 'lofi', 'latin', 'dominican'];
 const GAIN = {kick: 0.8, snare: 0.6, clap: 0.5, hat: 0.35, ohat: 0.35, bass: 0.55, crash: 0.4, riser: 0.35};
 const KIT_ROOT = 33; // built-in 808 samples are rendered at A1
 S.fxBufs = {}; S.kitBufs = {}; S.userBufs = {}; S.userNames = {}; S.kitName = null; S.kitReady = Promise.resolve();
-S.roots = (() => { try { return Object.assign({bass: KIT_ROOT, keys: 60, pad: 60, lead: 60}, JSON.parse(localStorage.getItem('roots') || '{}')); } catch (e) { return {bass: KIT_ROOT, keys: 60, pad: 60, lead: 60}; } })();
+S.roots = (() => { try { return Object.assign({bass: KIT_ROOT, keys: 60, pad: 60, lead: 60, bell: 60}, JSON.parse(localStorage.getItem('roots') || '{}')); } catch (e) { return {bass: KIT_ROOT, keys: 60, pad: 60, lead: 60, bell: 60}; } })();
 function loadInstruments() {
   const fx = Promise.all(['crash', 'riser'].map(async n => { try { const r = await fetch(`samples/fx/${n}.wav`); if (r.ok) S.fxBufs[n] = await decode(await r.arrayBuffer()); } catch (e) {} }));
-  S.instReady = Promise.all([fx].concat(['keys', 'pad', 'lead'].map(async n => {
+  S.instReady = Promise.all([fx].concat(['keys', 'pad', 'lead', 'bell'].map(async n => {
     S.instBufs[n] = {};
     for (const r of [48, 60, 72]) {
       try { const res = await fetch(`samples/inst/${n}-${r}.wav`); if (res.ok) S.instBufs[n][r] = await decode(await res.arrayBuffer()); } catch (e) { /* synth fallback */ }
@@ -832,9 +845,9 @@ function makeMix(ctx) {
   m.rev = rin;
   return m;
 }
-const BUS = {kick: 'drums', snare: 'drums', clap: 'drums', hat: 'drums', ohat: 'drums', crash: 'drums', riser: 'drums', bass: 'bass', keys: 'chords', pad: 'chords', lead: 'lead'};
-const SEND = {snare: 0.16, clap: 0.22, ohat: 0.06, crash: 0.1, keys: 0.18, pad: 0.28, lead: 0.24};
-const PAN = {hat: -0.22, ohat: 0.3, clap: 0.08, crash: 0.18, lead: 0.1};
+const BUS = {kick: 'drums', snare: 'drums', clap: 'drums', hat: 'drums', ohat: 'drums', crash: 'drums', riser: 'drums', bass: 'bass', keys: 'chords', pad: 'chords', lead: 'lead', bell: 'lead'};
+const SEND = {snare: 0.16, clap: 0.22, ohat: 0.06, crash: 0.1, keys: 0.18, pad: 0.28, lead: 0.24, bell: 0.3};
+const PAN = {hat: -0.22, ohat: 0.3, clap: 0.08, crash: 0.18, lead: 0.1, bell: 0.1};
 function route(c, m, node, inst, pan) {
   let out = node;
   const pn = pan !== undefined ? pan : PAN[inst] || 0;
@@ -899,6 +912,7 @@ const FEEL = {
   afrobeats: {hat: 0.004, snare: 0.004},
   trapdembow: {hat: 0.003},
   dembow: {hat: 0.003},
+  dominican: {hat: 0.003},
 };
 const INST_ID = {kick: 1, snare: 2, clap: 3, hat: 4, ohat: 5, bass: 6, chords: 7, lead: 8};
 function feel(inst, bar, step) {
@@ -908,18 +922,23 @@ function feel(inst, bar, step) {
 
 function playStep(c, m, nb, t, bar, step, stepDur) {
   if (!S.mute.chords && bar.chords && bar.chords[step]) {
-    const inst = chordInst(), n = runLength(bar.chords, step, v => v, 16), vel = bar.chords[step];
+    const inst = chordInst(), n = Math.min(runLength(bar.chords, step, v => v, 16), (bar.cut || STEPS) - step), vel = bar.chords[step];
     const gain = (inst === 'pad' ? 0.13 : 0.17) * (0.6 + 0.4 * vel);
     bar.chord.notes.forEach((x, k) => playNote(c, m, t + k * 0.006, inst, x, stepDur * n, gain, [-0.35, 0.35, -0.15, 0.15][k % 4]));
   }
   if (!S.mute.lead && bar.lead && bar.lead[step] >= 0) {
     const n = runLength(bar.lead, step, v => v >= 0, 4);
-    playNote(c, m, t + feel('lead', bar, step), 'lead', bar.lead[step], stepDur * n + 0.15, step % 4 === 0 ? 0.32 : 0.24);
+    playNote(c, m, t + feel('lead', bar, step), leadInst(), bar.lead[step], stepDur * Math.min(n, (bar.cut || STEPS) - step) + 0.15, step % 4 === 0 ? 0.32 : 0.24);
   }
   for (const inst of ['kick', 'snare', 'clap', 'hat', 'ohat']) {
     const v = bar[inst][step];
     if (v) {
       const tt = t + feel(inst, bar, step);
+      if (inst === 'hat' && bar.roll && bar.roll[step]) { // trap roll: 2 or 3 quick hits that rise in volume and pitch
+        const n = bar.roll[step];
+        for (let k = 0; k < n; k++) playInst(c, m, nb, tt + k * stepDur / n, 'hat', undefined, undefined, v * (0.55 + 0.45 * k / (n - 1)), 0, 1 + 0.07 * k);
+        continue;
+      }
       playInst(c, m, nb, tt, inst, undefined, undefined, v);
       if (inst === 'kick') duck(m, tt, TRAPLIKE.includes(S.genre) ? 0.4 : 0.55, S.genre === 'lofi' || S.genre === 'rnb' ? 0.28 : 0.2);
     }
@@ -930,7 +949,7 @@ function playStep(c, m, nb, t, bar, step, stepDur) {
     if (buf) playInst(c, m, nb, t, 'riser', undefined, undefined, bar.riser[step], 0, Math.max(0.5, Math.min(2, buf.duration / (stepDur * (STEPS - step)))));
   }
   if (bar.bass[step] >= 0) {
-    const n = runLength(bar.bass, step, v => v >= 0, 4);
+    const n = Math.min(runLength(bar.bass, step, v => v >= 0, 4), (bar.cut || STEPS) - step);
     const next = step + n < STEPS && bar.bass[step + n] >= 0 ? S.root + bar.bass[step + n] : 0;
     const slide = bar.slide && bar.slide[step] && next;
     playInst(c, m, nb, t, 'bass', S.root + bar.bass[step], stepDur * n, 1, slide ? next : 0);
@@ -1086,7 +1105,7 @@ function renderGrid() {
   $('#seq').innerHTML = GRID_ROWS.map(t =>
     `<span class="nm">${LABEL[t]}</span>` + bar[t].map((v, s) => {
       const on = t === 'bass' || t === 'lead' ? v >= 0 : v;
-      const txt = t === 'lead' && v >= 0 ? noteName(v) : t === 'chords' && v && s === bar.chords.findIndex(x => x > 0) ? bar.chord.name : t === 'bass' && bar.slide && bar.slide[s] ? '↘' : '';
+      const txt = t === 'lead' && v >= 0 ? noteName(v) : t === 'chords' && v && s === bar.chords.findIndex(x => x > 0) ? bar.chord.name : t === 'bass' && bar.slide && bar.slide[s] ? '↘' : t === 'hat' && v && bar.roll && bar.roll[s] ? 'x' + bar.roll[s] : '';
       const op = on && t !== 'bass' && t !== 'lead' ? ` style="opacity:${(0.4 + 0.6 * Math.min(1, v)).toFixed(2)}"` : '';
       return `<button class="cell${s && s % 4 === 0 ? ' b4' : ''}${on ? ' on' : ''}" data-t="${t}" data-s="${s}"${op}>${txt}</button>`;
     }).join('')).join('');
@@ -1148,7 +1167,7 @@ $('#seq').onclick = e => {
   const bar = S.bars[S.sel], t = c.dataset.t, s = +c.dataset.s;
   if (t === 'bass') bar.bass[s] = bar.bass[s] >= 0 ? -1 : 0;
   else if (t === 'lead') bar.lead[s] = bar.lead[s] >= 0 ? -1 : bar.chord.tone;
-  else bar[t][s] = bar[t][s] ? 0 : 0.85;
+  else { bar[t][s] = bar[t][s] ? 0 : 0.85; if (t === 'hat' && !bar.hat[s] && bar.roll) bar.roll[s] = 0; }
   renderGrid(); scheduleSave();
   if (!S.playing) {
     unlockAudio(); const x = ensureCtx();

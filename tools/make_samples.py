@@ -138,6 +138,14 @@ KITS = {
         'ohat': lambda: crush(filt(hat(0.18, metal=0.3), 'low', 7500), 9),
         'bass': lambda: filt(bass808(decay=0.6, drive=1.4, dur=1.0), 'low', 900),
     },
+    'dominican': {
+        'kick': lambda: kick(195, 47, 0.026, 0.4, 3.6, click=0.32, dur=0.8),
+        'snare': lambda: reverb(snare(265, 0.04, 0.09, 2600, 11500, 1.0, dur=0.28, drive=3.0), 0.25, 0.14),
+        'clap': lambda: reverb(clap(lo=1100, hi=4800, tail=0.1), 0.3, 0.18),
+        'hat': lambda: hat(0.024, metal=0.65),
+        'ohat': lambda: hat(0.18, metal=0.55),
+        'bass': lambda: bass808(decay=1.5, drive=5.0, glide=0.04, dur=1.9),
+    },
     'latin': {
         'kick': lambda: kick(175, 50, 0.025, 0.3, 2.4, click=0.3, dur=0.6),
         'snare': lambda: snare(240, 0.045, 0.1, 2200, 10000, 1.0, dur=0.3, drive=2.0),
@@ -208,7 +216,19 @@ def lead_note(f, dur=1.6):
     return x * env(t, 0.55, 0.004) * np.minimum(1, (dur - t) / 0.2)
 
 
-INSTRUMENTS = {'keys': keys_note, 'pad': pad_note, 'lead': lead_note}
+
+def bell_note(f, dur=2.4):
+    """Dark FM bell: sine carrier with a decaying inharmonic modulator."""
+    t = tt(dur)
+    mod = np.sin(2 * np.pi * f * 3.5 * t) * 2.2 * np.exp(-t / 0.5)
+    x = np.sin(2 * np.pi * f * t + mod) * np.exp(-t / 1.1)
+    x += 0.35 * np.sin(2 * np.pi * f * 2.0 * t + 0.5 * mod) * np.exp(-t / 0.6)
+    x += 0.15 * np.sin(2 * np.pi * f * 5.04 * t) * np.exp(-t / 0.25)
+    x *= 1 - np.exp(-t / 0.002)
+    return filt(x, 'low', 9000)
+
+
+INSTRUMENTS = {'keys': keys_note, 'pad': pad_note, 'lead': lead_note, 'bell': bell_note}
 
 
 # ---- fx: crash + riser (kit-independent) ----
