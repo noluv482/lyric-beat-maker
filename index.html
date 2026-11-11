@@ -95,6 +95,20 @@ dialog input[type=password],dialog input[type=text]{width:100%;background:#0b0c1
 </div>
 
 <section class="card" style="margin-top:14px">
+  <div class="row" style="margin:0 0 4px">
+    <b>Rap your flow</b>
+    <button class="pri" id="rec">● Record</button>
+    <select id="rapBars"><option value="4">4 bars</option><option value="8" selected>8 bars</option><option value="16">16 bars</option></select>
+    <label><input type="checkbox" id="rapClick" checked> Click while I rap</label>
+  </div>
+  <div class="row" style="margin:6px 0 0">
+    <label>Mic timing <input type="range" id="rapNudge" min="-150" max="150" value="0"><b id="rapNudgeV">0 ms</b></label>
+    <label id="playRapWrap" style="display:none"><input type="checkbox" id="playRap" checked> Play my rap with the beat</label>
+  </div>
+  <p id="rapstat" class="hint" style="margin:6px 0 0">Wear headphones. Set the BPM first. You get a one-bar count-in, then rap. The app finds each syllable you hit and builds the beat around your flow.</p>
+</section>
+
+<section class="card" style="margin-top:14px">
   <div class="row" style="margin:0 0 8px">
     <button class="pri" id="play">▶ Play</button>
     <select id="genre"></select>
@@ -528,6 +542,7 @@ function makeBar(g, line, rng, barIdx, nBars, pl, st, o) {
   steps.forEach(step => {
     if (!bar.snare[step] && step % 4 !== 0 && rng() < 0.7) bar.kick[step] = 1;
   });
+  if (pl && pl.strong) pl.strong.filter(x => x >= part * STEPS && x < (part + 1) * STEPS).forEach(x => { if (!bar.snare[x - part * STEPS]) bar.kick[x - part * STEPS] = 1; });
   // density from syllable count: busier lines get more hats
   if (dens === 'busy' && g !== 'lofi' && g !== 'rnb') for (let i = 1; i < STEPS; i += 2) if (rng() < 0.5) bar.hat[i] = 1;
   if (dens === 'sparse') for (let i = 2; i < STEPS; i += 4) bar.hat[i] = 0;
@@ -1007,12 +1022,14 @@ async function start() {
   const c = ensureCtx(); c.resume();
   S.step = S.sel * STEPS; S.next = c.currentTime + 0.05; S.playing = true;
   S.timer = setInterval(tick, 25);
+  startRap();
   $('#play').textContent = '■ Stop';
   setStatus('Playing. No sound? Turn the silent switch off and the volume up.');
   setTimeout(() => { if (S.playing && S.ctx.state !== 'running') setStatus('Audio is blocked by the phone. Tap Play again.', true); }, 600);
   requestAnimationFrame(anim);
 }
 function stop() {
+  if (typeof stopRap === 'function') stopRap();
   kLine = -1; $('#karaoke').textContent = '';
   S.playing = false; clearInterval(S.timer); S.queue = [];
   $('#play').textContent = '▶ Play';
@@ -1256,6 +1273,140 @@ async function importPack(files) {
 $('#imppack').onclick = () => $('#packfile').click();
 $('#packfile').onchange = e => { if (e.target.files.length) importPack(e.target.files); e.target.value = ''; };
 $('#rstall').onclick = async () => { for (const t of Object.keys(S.userBufs)) await clearUserSample(t); $('#packstat').textContent = 'Back to the built-in sounds.'; };
+
+/* ---------- rap into the app: find where the rapper hits each syllable ---------- */
+function setRap(t, err) { $('#rapstat').textContent = t; $('#rapstat').style.color = err ? '#ffb4a2' : ''; }
+function pct(arr, q) { const a = Float32Array.from(arr).sort(); return a[Math.min(a.length - 1, Math.floor(q * a.length))]; }
+
+/* returns [{t (seconds from first sample), s (0..1 loudness)}] for each syllable-like onset */
+function rapOnsets(x, sr) {
+  const hpA = Math.exp(-2 * Math.PI * 150 / sr), lpA = Math.exp(-2 * Math.PI * 3500 / sr);
+  const y = new Float32Array(x.length);
+  let hp = 0, lp = 0, prev = 0;
+  for (let i = 0; i < x.length; i++) { hp = hpA * (hp + x[i] - prev); prev = x[i]; lp = (1 - lpA) * hp + lpA * lp; y[i] = lp; }
+  const hop = Math.round(sr * 0.01), win = hop * 3, n = Math.floor((y.length - win) / hop);
+  if (n < 20) return [];
+  const db = new Float32Array(n);
+  for (let f = 0; f < n; f++) { let e = 0; for (let i = f * hop; i < f * hop + win; i++) e += y[i] * y[i]; db[f] = 10 * Math.log10(e / win + 1e-10); }
+  const sm = new Float32Array(n);
+  for (let f = 0; f < n; f++) { let a = 0, c = 0; for (let k = -1; k <= 1; k++) if (f + k >= 0 && f + k < n) { a += db[f + k]; c++; } sm[f] = a / c; }
+  const floor = pct(sm, 0.1), ceil = pct(sm, 0.95);
+  if (ceil - floor < 12) return [];
+  const out = [];
+  for (let i = 2; i < n - 2; i++) {
+    if (!(sm[i] > sm[i - 1] && sm[i] >= sm[i + 1]) || sm[i] < floor + 0.4 * (ceil - floor)) continue;
+    let v = i; while (v > 0 && i - v < 30 && sm[v - 1] <= sm[v]) v--; // walk back down to the valley just before this peak
+    if (sm[i] - sm[v] < 4) continue;
+    const last = out[out.length - 1];
+    if (last && i - last.i < 9) { if (sm[i] > sm[last.i]) out.pop(); else continue; }
+    let j = v; while (j < i && sm[j] < sm[v] + 0.5 * (sm[i] - sm[v])) j++;
+    out.push({i, t: (j + 1) * hop / sr, s: Math.max(0, Math.min(1, (sm[i] - floor) / (ceil - floor)))});
+  }
+  return out;
+}
+
+/* put onsets on the 16th-note grid, one list per bar */
+function flowFromOnsets(on, tFirst, tStart, beat, bars, nudge) {
+  const out = Array.from({length: bars}, () => []);
+  for (const o of on) {
+    const sf = (o.t + tFirst - tStart - nudge) / (beat / 4), sr = Math.round(sf);
+    if (sr < 0 || sr >= bars * STEPS) continue;
+    const b = Math.floor(sr / STEPS), st = sr % STEPS, ex = out[b].find(q => q.step === st);
+    if (ex) ex.s = Math.max(ex.s, o.s); else out[b].push({step: st, s: o.s});
+  }
+  out.forEach(b => b.sort((a, c) => a.step - c.step));
+  return out;
+}
+
+function applyFlow(fb, bpm, raw) {
+  const N = fb.length, total = fb.reduce((a, b) => a + b.length, 0);
+  const lyr = raw ? raw.split('\n').map(l => l.trim()).filter(Boolean).slice(0, 16) : [];
+  let lines, bpl;
+  if (lyr.length && N % lyr.length === 0 && N / lyr.length <= 2) { bpl = N / lyr.length; S.lang = detectLang(raw); lines = lyr.map(parseLine); }
+  else { bpl = 1; lines = fb.map((f, i) => ({text: `♪ your flow, bar ${i + 1}`, syl: f.length, stress: [], words: ['♪']})); }
+  const avg = lines.reduce((a, l) => a + l.syl, 0) / (lines.length || 1);
+  const info = {lines, mood: 'your flow', genre: GENRES[S.genre] ? S.genre : 'trap', avg, seed: hash(raw || String(N + total)), lang: S.lang, source: 'your rap', summary: `Built from your rap: ${total} syllables over ${N} bars at ${bpm} BPM (${(total / N).toFixed(1)} per bar).`};
+  info.plan = lines.map((_, i) => {
+    const steps = [], strong = []; let cnt = 0;
+    for (let p = 0; p < bpl; p++) (fb[i * bpl + p] || []).forEach(o => { steps.push({st: p * STEPS + o.step, s: o.s}); cnt++; if (o.s > 0.55) strong.push(p * STEPS + o.step); });
+    const per = cnt / bpl;
+    return {stress_steps: steps.sort((a, b) => b.s - a.s).slice(0, 12).map(x => x.st), density: per > 9 ? 'busy' : per < 5 ? 'sparse' : 'medium', strong, melody: [], drums: null};
+  });
+  info.sections = detectSections(lines);
+  S.info = info; S.bpm = bpm; S.bpl = bpl;
+  if (S.styleChoice !== 'auto' && GENRES[S.styleChoice]) S.genre = S.styleChoice;
+  S.minor = GENRES[S.genre].minor; S.swing = GENRES[S.genre].swing; S.root = 28 + (info.seed % 12);
+  S.seed = info.seed; S.melSeed = info.seed ^ 0x51ed; S.sel = 0;
+  syncControls(); build();
+}
+
+let rapBusy = false;
+async function recordRap() {
+  if (rapBusy) return;
+  unlockAudio();
+  const c = ensureCtx();
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({audio: {echoCancellation: false, noiseSuppression: false, autoGainControl: false}}); }
+  catch (e) { return setRap('The microphone is blocked. Allow it for this site in your browser settings, then try again.', true); }
+  rapBusy = true; $('#rec').disabled = true; stop();
+  if (c.state !== 'running') await c.resume();
+  const bpm = S.bpm || 90, beat = 60 / bpm, bars = +$('#rapBars').value, click = $('#rapClick').checked, nudge = +$('#rapNudge').value / 1000;
+  const src = c.createMediaStreamSource(stream), proc = c.createScriptProcessor(4096, 1, 1), mute = c.createGain();
+  mute.gain.value = 0;
+  const chunks = []; let tFirst = null;
+  proc.onaudioprocess = e => { if (tFirst === null) tFirst = c.currentTime - 4096 / c.sampleRate - (c.baseLatency || 0); chunks.push(new Float32Array(e.inputBuffer.getChannelData(0))); };
+  src.connect(proc); proc.connect(mute); mute.connect(c.destination);
+  const t0 = c.currentTime + 0.4, tStart = t0 + 4 * beat, tEnd = tStart + bars * 4 * beat;
+  const beeps = click ? 4 + bars * 4 : 4;
+  for (let k = 0; k < beeps; k++) {
+    const o = c.createOscillator(), g = c.createGain(), t = t0 + k * beat;
+    o.frequency.value = k % 4 === 0 ? 1600 : 1000; g.gain.setValueAtTime(0.25, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.05);
+    o.connect(g); g.connect(c.destination); o.start(t); o.stop(t + 0.06);
+  }
+  const tick = setInterval(() => {
+    const now = c.currentTime;
+    if (now < tStart) setRap(`Count-in… ${Math.max(1, Math.ceil((tStart - now) / beat))}`);
+    else setRap(`Rap! Bar ${Math.min(bars, Math.floor((now - tStart) / (4 * beat)) + 1)} of ${bars}`);
+  }, 100);
+  await new Promise(r => setTimeout(r, (tEnd - c.currentTime + 0.3) * 1000));
+  clearInterval(tick);
+  proc.disconnect(); src.disconnect(); stream.getTracks().forEach(t => t.stop());
+  setRap('Listening to your flow…');
+  await new Promise(r => setTimeout(r, 30));
+  try { finishRap(chunks, c.sampleRate, tFirst === null ? t0 : tFirst, tStart, beat, bars, nudge, bpm); }
+  catch (e) { setRap('Could not analyze that take (' + e.message + '). Try again.', true); }
+  rapBusy = false; $('#rec').disabled = false;
+}
+function finishRap(chunks, sr, tFirst, tStart, beat, bars, nudge, bpm) {
+  const len = chunks.reduce((a, b) => a + b.length, 0), x = new Float32Array(len);
+  let o = 0; for (const ch of chunks) { x.set(ch, o); o += ch.length; }
+  const on = rapOnsets(x, sr);
+  if (on.length < 3) return setRap('I did not hear enough rapping. Move closer to the mic, rap louder, and try again.', true);
+  const fb = flowFromOnsets(on, tFirst, tStart, beat, bars, nudge);
+  const total = fb.reduce((a, b) => a + b.length, 0);
+  if (total < 3) return setRap('Your rap landed outside the bars. Check the Mic timing slider and try again.', true);
+  // keep the take so it can play over the beat; sample 0 of the buffer is the start of bar 1
+  const startSample = Math.round((tStart + nudge - tFirst) * sr), outLen = Math.round(bars * 4 * beat * sr);
+  const buf = ensureCtx().createBuffer(1, outLen, sr), d = buf.getChannelData(0);
+  for (let i = 0; i < outLen; i++) { const k = startSample + i; d[i] = k >= 0 && k < x.length ? x[k] : 0; }
+  S.rap = {buf, bpm};
+  $('#playRapWrap').style.display = '';
+  applyFlow(fb, bpm, $('#lyrics').value.trim());
+  setRap(`Got it: ${total} syllables over ${bars} bars. The beat follows your flow. Press Play (tick "Play my rap" to hear yourself on it). If it feels early or late, move Mic timing and record again.`);
+}
+let rapSrc = null;
+function stopRap() { try { if (rapSrc) rapSrc.stop(); } catch (e) {} rapSrc = null; }
+function startRap() {
+  stopRap();
+  if (!S.rap || !$('#playRap').checked) return;
+  if (Math.abs(S.rap.bpm - S.bpm) >= 1) { setRap(`The tempo is ${S.bpm} now but you rapped at ${S.rap.bpm}. Set the BPM back to ${S.rap.bpm} to hear your rap with the beat.`, true); return; }
+  const c = S.ctx, barDur = 240 / S.bpm, delta = ((S.structure ? 1 : 0) - S.sel) * barDur;
+  const src = c.createBufferSource(); src.buffer = S.rap.buf; src.connect(c.destination);
+  const off = Math.max(0, -delta);
+  if (off < S.rap.buf.duration) { src.start(S.next + Math.max(0, delta), off); rapSrc = src; }
+}
+$('#rec').onclick = recordRap;
+$('#rapNudge').oninput = e => { $('#rapNudgeV').textContent = e.target.value + ' ms'; };
 
 let saveT;
 function scheduleSave() { clearTimeout(saveT); saveT = setTimeout(saveProject, 400); }
