@@ -63,6 +63,8 @@ dialog input[type=password],dialog input[type=text]{width:100%;background:#0b0c1
 #karaoke span.on{color:#fff}
 #karaoke span.now{color:var(--acc)}
 #meter{display:inline-block;width:70px;height:8px;background:#0b0c11;border:1px solid var(--line);border-radius:4px;overflow:hidden}
+#micmeter{display:inline-block;width:70px;height:8px;background:#0b0c11;border:1px solid var(--line);border-radius:4px;overflow:hidden}
+#micmeter i{display:block;height:100%;width:0;background:#6bd18a}
 #meter i{display:block;height:100%;width:0;background:var(--acc)}
 .chip.btn{cursor:pointer;border:1px solid transparent;background:#222637;color:var(--fg);font:inherit;font-size:13px}
 .chip.btn.sel{border-color:var(--acc);background:#2a1d27;color:#fff}
@@ -98,6 +100,8 @@ dialog input[type=password],dialog input[type=text]{width:100%;background:#0b0c1
   <div class="row" style="margin:0 0 4px">
     <b>Rap your flow</b>
     <button class="pri" id="rec">● Record</button>
+    <button id="testmic">Test mic</button>
+    <span id="micmeter" title="Mic level"><i></i></span>
     <select id="rapBars"><option value="4">4 bars</option><option value="8" selected>8 bars</option><option value="16">16 bars</option></select>
     <label><input type="checkbox" id="rapClick" checked> Click while I rap</label>
   </div>
@@ -979,7 +983,7 @@ let silentEl = null;
 function unlockAudio() {
   const c = ensureCtx();
   if (c.state !== 'running') c.resume();
-  try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
+  try { if (navigator.audioSession && !rapBusy) navigator.audioSession.type = 'playback'; } catch (e) {}
   if (!silentEl) {
     const sr = 8000, n = sr, buf = new Uint8Array(44 + n), v = new DataView(buf.buffer);
     const w = (o, t) => [...t].forEach((ch, i) => v.setUint8(o + i, ch.charCodeAt(0)));
@@ -990,7 +994,7 @@ function unlockAudio() {
     silentEl.src = URL.createObjectURL(new Blob([buf], {type: 'audio/wav'}));
     silentEl.loop = true; silentEl.setAttribute('playsinline', ''); silentEl.preload = 'auto';
   }
-  silentEl.play().catch(() => {});
+  if (!rapBusy) silentEl.play().catch(() => {});
   const b = c.createBuffer(1, 1, 22050), src = c.createBufferSource();
   src.buffer = b; src.connect(c.destination); src.start(0);
 }
@@ -1341,41 +1345,87 @@ function applyFlow(fb, bpm, raw) {
 }
 
 let rapBusy = false;
+function micError(e) {
+  const n = e && e.name;
+  if (n === 'NotAllowedError' || n === 'SecurityError') return 'The microphone is blocked. On iPhone: open the link in Safari (not from the home screen), tap the "aA" button, then Website Settings, then Microphone, then Allow. Also check Settings > Safari > Microphone is not set to Deny. Then try again.';
+  if (n === 'NotFoundError' || n === 'OverconstrainedError') return 'No microphone was found on this device.';
+  if (n === 'NotReadableError' || n === 'AbortError') return 'The microphone is busy. Close other apps that use it (calls, recorders, voice assistants) and try again.';
+  return 'Could not open the microphone (' + (n || 'unknown') + (e && e.message ? ': ' + e.message : '') + ').';
+}
+/* iOS: the "playback" audio mode that makes sound work with the silent switch gives the mic no input,
+   so switch to play-and-record while the mic is on and back to playback after. */
+function micMode(on) {
+  try { if (navigator.audioSession) navigator.audioSession.type = on ? 'play-and-record' : 'playback'; } catch (e) {}
+  if (silentEl) { if (on) silentEl.pause(); else silentEl.play().catch(() => {}); }
+}
+async function openMic() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw Object.assign(new Error('no mediaDevices'), {name: 'NotFoundError'});
+  micMode(true);
+  try { return await navigator.mediaDevices.getUserMedia({audio: {echoCancellation: false, noiseSuppression: false, autoGainControl: false}}); }
+  catch (e) { try { return await navigator.mediaDevices.getUserMedia({audio: true}); } catch (e2) { micMode(false); throw e2; } }
+}
+async function testMic() {
+  if (rapBusy) return;
+  rapBusy = true; $('#testmic').disabled = $('#rec').disabled = true;
+  unlockAudio();
+  let stream;
+  try { stream = await openMic(); } catch (e) { setRap(micError(e), true); rapBusy = false; $('#testmic').disabled = $('#rec').disabled = false; return; }
+  const c = ensureCtx(); if (c.state !== 'running') await c.resume();
+  const src = c.createMediaStreamSource(stream), an = c.createAnalyser(), buf = new Uint8Array(2048), mute = c.createGain();
+  an.fftSize = 2048; mute.gain.value = 0; src.connect(an); an.connect(mute); mute.connect(c.destination);
+  setRap('Say something or clap for 4 seconds…');
+  let peak = 0; const t0 = Date.now();
+  await new Promise(res => { const iv = setInterval(() => {
+    an.getByteTimeDomainData(buf); let pk = 0; for (const v of buf) pk = Math.max(pk, Math.abs(v - 128));
+    peak = Math.max(peak, pk); $('#micmeter i').style.width = Math.min(100, pk / 128 * 400) + '%';
+    if (Date.now() - t0 > 4000) { clearInterval(iv); res(); } }, 50); });
+  src.disconnect(); stream.getTracks().forEach(t => t.stop()); micMode(false);
+  $('#micmeter i').style.width = '0';
+  setRap(peak > 6 ? 'Mic works: I can hear you. Now press Record.' : 'The mic is connected but I hear silence. Move closer, check the phone is not muted by a case or Bluetooth device, and make sure Safari has microphone access. If you use Bluetooth earbuds, try wired ones or the phone mic.', peak <= 6);
+  rapBusy = false; $('#testmic').disabled = $('#rec').disabled = false;
+}
 async function recordRap() {
   if (rapBusy) return;
-  unlockAudio();
-  const c = ensureCtx();
-  let stream;
-  try { stream = await navigator.mediaDevices.getUserMedia({audio: {echoCancellation: false, noiseSuppression: false, autoGainControl: false}}); }
-  catch (e) { return setRap('The microphone is blocked. Allow it for this site in your browser settings, then try again.', true); }
-  rapBusy = true; $('#rec').disabled = true; stop();
-  if (c.state !== 'running') await c.resume();
-  const bpm = S.bpm || 90, beat = 60 / bpm, bars = +$('#rapBars').value, click = $('#rapClick').checked, nudge = +$('#rapNudge').value / 1000;
-  const src = c.createMediaStreamSource(stream), proc = c.createScriptProcessor(4096, 1, 1), mute = c.createGain();
-  mute.gain.value = 0;
-  const chunks = []; let tFirst = null;
-  proc.onaudioprocess = e => { if (tFirst === null) tFirst = c.currentTime - 4096 / c.sampleRate - (c.baseLatency || 0); chunks.push(new Float32Array(e.inputBuffer.getChannelData(0))); };
-  src.connect(proc); proc.connect(mute); mute.connect(c.destination);
-  const t0 = c.currentTime + 0.4, tStart = t0 + 4 * beat, tEnd = tStart + bars * 4 * beat;
-  const beeps = click ? 4 + bars * 4 : 4;
-  for (let k = 0; k < beeps; k++) {
-    const o = c.createOscillator(), g = c.createGain(), t = t0 + k * beat;
-    o.frequency.value = k % 4 === 0 ? 1600 : 1000; g.gain.setValueAtTime(0.25, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.05);
-    o.connect(g); g.connect(c.destination); o.start(t); o.stop(t + 0.06);
-  }
-  const tick = setInterval(() => {
-    const now = c.currentTime;
-    if (now < tStart) setRap(`Count-in… ${Math.max(1, Math.ceil((tStart - now) / beat))}`);
-    else setRap(`Rap! Bar ${Math.min(bars, Math.floor((now - tStart) / (4 * beat)) + 1)} of ${bars}`);
-  }, 100);
-  await new Promise(r => setTimeout(r, (tEnd - c.currentTime + 0.3) * 1000));
-  clearInterval(tick);
-  proc.disconnect(); src.disconnect(); stream.getTracks().forEach(t => t.stop());
-  setRap('Listening to your flow…');
-  await new Promise(r => setTimeout(r, 30));
-  try { finishRap(chunks, c.sampleRate, tFirst === null ? t0 : tFirst, tStart, beat, bars, nudge, bpm); }
-  catch (e) { setRap('Could not analyze that take (' + e.message + '). Try again.', true); }
-  rapBusy = false; $('#rec').disabled = false;
+  rapBusy = true; $('#rec').disabled = $('#testmic').disabled = true;
+  try {
+    unlockAudio();
+    const c = ensureCtx();
+    let stream;
+    try { stream = await openMic(); } catch (e) { setRap(micError(e), true); return; }
+    stop();
+    if (c.state !== 'running') await c.resume();
+    const bpm = S.bpm || 90, beat = 60 / bpm, bars = +$('#rapBars').value, click = $('#rapClick').checked, nudge = +$('#rapNudge').value / 1000;
+    const src = c.createMediaStreamSource(stream), proc = c.createScriptProcessor(4096, 1, 1), mute = c.createGain(), an = c.createAnalyser(), mb = new Uint8Array(2048);
+    mute.gain.value = 0; an.fftSize = 2048;
+    const chunks = []; let tFirst = null;
+    proc.onaudioprocess = e => { if (tFirst === null) tFirst = c.currentTime - 4096 / c.sampleRate - (c.baseLatency || 0); chunks.push(new Float32Array(e.inputBuffer.getChannelData(0))); };
+    src.connect(proc); src.connect(an); proc.connect(mute); mute.connect(c.destination);
+    const t0 = c.currentTime + 0.4, tStart = t0 + 4 * beat, tEnd = tStart + bars * 4 * beat;
+    const beeps = click ? 4 + bars * 4 : 4;
+    for (let k = 0; k < beeps; k++) {
+      const o = c.createOscillator(), g = c.createGain(), t = t0 + k * beat;
+      o.frequency.value = k % 4 === 0 ? 1600 : 1000; g.gain.setValueAtTime(0.25, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.05);
+      o.connect(g); g.connect(c.destination); o.start(t); o.stop(t + 0.06);
+    }
+    const tick = setInterval(() => {
+      const now = c.currentTime;
+      if (now < tStart) setRap(`Count-in… ${Math.max(1, Math.ceil((tStart - now) / beat))}`);
+      else setRap(`Rap! Bar ${Math.min(bars, Math.floor((now - tStart) / (4 * beat)) + 1)} of ${bars}`);
+      an.getByteTimeDomainData(mb); let pk = 0; for (const v of mb) pk = Math.max(pk, Math.abs(v - 128));
+      $('#micmeter i').style.width = Math.min(100, pk / 128 * 300) + '%';
+    }, 60);
+    await new Promise(r => setTimeout(r, (tEnd - c.currentTime + 0.3) * 1000));
+    clearInterval(tick); $('#micmeter i').style.width = '0';
+    proc.disconnect(); src.disconnect(); stream.getTracks().forEach(t => t.stop()); micMode(false);
+    if (!chunks.length) return setRap('The microphone gave no audio at all. Run Test mic, make sure Safari has microphone access, and try again.', true);
+    let pk = 0; for (const ch of chunks) for (let i = 0; i < ch.length; i += 16) pk = Math.max(pk, Math.abs(ch[i]));
+    if (pk < 0.004) return setRap('The recording is silent. Run Test mic. On iPhone, allow the microphone for this site in Safari (aA > Website Settings), and avoid Bluetooth earbuds for recording.', true);
+    setRap('Listening to your flow…');
+    await new Promise(r => setTimeout(r, 30));
+    try { finishRap(chunks, c.sampleRate, tFirst === null ? t0 : tFirst, tStart, beat, bars, nudge, bpm); }
+    catch (e) { setRap('Could not analyze that take (' + e.message + '). Try again.', true); }
+  } catch (e) { micMode(false); setRap('Recording failed: ' + (e && e.message || e) + '. Run Test mic to check the microphone.', true); }
+  finally { rapBusy = false; $('#rec').disabled = $('#testmic').disabled = false; }
 }
 function finishRap(chunks, sr, tFirst, tStart, beat, bars, nudge, bpm) {
   const len = chunks.reduce((a, b) => a + b.length, 0), x = new Float32Array(len);
@@ -1406,6 +1456,7 @@ function startRap() {
   if (off < S.rap.buf.duration) { src.start(S.next + Math.max(0, delta), off); rapSrc = src; }
 }
 $('#rec').onclick = recordRap;
+$('#testmic').onclick = testMic;
 $('#rapNudge').oninput = e => { $('#rapNudgeV').textContent = e.target.value + ' ms'; };
 
 let saveT;
