@@ -68,6 +68,14 @@ dialog input[type=password],dialog input[type=text]{width:100%;background:#0b0c1
 #meter i{display:block;height:100%;width:0;background:var(--acc)}
 .chip.btn{cursor:pointer;border:1px solid transparent;background:#222637;color:var(--fg);font:inherit;font-size:13px}
 .chip.btn.sel{border-color:var(--acc);background:#2a1d27;color:#fff}
+.cr{display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center;padding:8px 0;border-top:1px solid var(--line)}
+.cr .star{background:none;border:none;font-size:20px;padding:0 4px;cursor:pointer;color:var(--mut)}
+.cr .star.on{color:#ffd166}
+.cr .nm{cursor:pointer;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cr .meta{color:var(--mut);font-size:12px}
+.cr.cur .nm{color:var(--acc)}
+.cr .acts{display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end}
+.cr .acts button{padding:4px 8px;font-size:12px}
 .hint{color:var(--mut);font-size:13px;margin:6px 0 0}
 </style>
 </head>
@@ -95,6 +103,29 @@ dialog input[type=password],dialog input[type=text]{width:100%;background:#0b0c1
     <div id="lines"></div>
   </section>
 </div>
+
+<section class="card" style="margin-top:14px" id="library">
+  <div class="row" style="margin:0 0 6px">
+    <b>My creations</b>
+    <input type="text" id="cname" placeholder="Name this beat…" autocomplete="off">
+    <button class="pri" id="csave">Save</button>
+    <button id="csavenew" title="Keep the current one and save a copy">Save as new</button>
+    <button id="cnew" title="Start a fresh beat">New</button>
+  </div>
+  <div class="row" style="margin:0 0 6px">
+    <input type="text" id="csearch" placeholder="Search…" autocomplete="off">
+    <select id="cfolder"></select>
+    <select id="csort"><option value="new">Newest</option><option value="name">Name</option><option value="fav">Favorites first</option></select>
+  </div>
+  <div id="clist"></div>
+  <div class="row" style="margin:8px 0 0">
+    <button id="cbackup">Back up everything</button>
+    <button id="crestore">Restore backup…</button>
+    <input type="file" id="cfile" accept="application/json,.json" hidden>
+    <span id="cstat" class="hint" style="margin:0"></span>
+  </div>
+  <p class="hint" style="margin:6px 0 0">Beats are stored on this device. Back up to a file now and then, and use the file to move them to another phone or browser.</p>
+</section>
 
 <section class="card" style="margin-top:14px">
   <div class="row" style="margin:0 0 4px">
@@ -769,8 +800,8 @@ function applyKit() {
 
 /* user samples persist in IndexedDB */
 const idb = () => new Promise((res, rej) => {
-  const r = indexedDB.open('beatmaker', 2);
-  r.onupgradeneeded = () => { for (const n of ['samples', 'kv']) if (!r.result.objectStoreNames.contains(n)) r.result.createObjectStore(n); };
+  const r = indexedDB.open('beatmaker', 3);
+  r.onupgradeneeded = () => { for (const n of ['samples', 'kv', 'creations']) if (!r.result.objectStoreNames.contains(n)) r.result.createObjectStore(n); };
   r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
 });
 async function idbDo(mode, fn, store = 'samples') {
@@ -1278,6 +1309,127 @@ $('#imppack').onclick = () => $('#packfile').click();
 $('#packfile').onchange = e => { if (e.target.files.length) importPack(e.target.files); e.target.value = ''; };
 $('#rstall').onclick = async () => { for (const t of Object.keys(S.userBufs)) await clearUserSample(t); $('#packstat').textContent = 'Back to the built-in sounds.'; };
 
+/* ---------- my creations: a saved library ---------- */
+S.currentId = null;
+const cStore = 'creations';
+const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+const cAll = async () => (await idbDo('readonly', st => st.getAll(), cStore)) || [];
+const cGet = id => idbDo('readonly', st => st.get(id), cStore);
+const cPut = rec => idbDo('readwrite', st => st.put(rec, rec.id), cStore);
+const cDel = id => idbDo('readwrite', st => st.delete(id), cStore);
+const cMsg = t => { $('#cstat').textContent = t; };
+function rapToRecord() {
+  if (!S.rap) return null;
+  const d = S.rap.buf.getChannelData(0), pcm = new Int16Array(d.length);
+  for (let i = 0; i < d.length; i++) pcm[i] = Math.max(-1, Math.min(1, d[i])) * 32767;
+  return {bpm: S.rap.bpm, sr: S.rap.buf.sampleRate, pcm: pcm.buffer};
+}
+function rapFromRecord(r) {
+  if (!r || !r.pcm) return null;
+  const pcm = new Int16Array(r.pcm), buf = ensureCtx().createBuffer(1, pcm.length, r.sr), d = buf.getChannelData(0);
+  for (let i = 0; i < pcm.length; i++) d[i] = pcm[i] / 32767;
+  return {buf, bpm: r.bpm};
+}
+const settingsNow = () => ({styleChoice: S.styleChoice, kitChoice: S.kitChoice, chordSound: S.chordSound, mute: S.mute, structure: S.structure, bplChoice: S.bplChoice});
+const stamp = () => new Date().toLocaleDateString(undefined, {month: 'short', day: 'numeric'});
+async function saveCreation(asNew) {
+  if (!S.info || !S.bars.length) return cMsg('Make a beat first.');
+  const old = !asNew && S.currentId ? await cGet(S.currentId) : null;
+  const name = $('#cname').value.trim() || (old && old.name) || `${GENRE_NAME[S.genre] || S.genre} beat, ${stamp()}`;
+  const rec = {
+    id: old ? old.id : newId(), name, folder: old ? old.folder : '', fav: old ? old.fav : false,
+    created: old ? old.created : Date.now(), updated: Date.now(),
+    genre: S.genre, bpm: S.bpm, bars: S.bars.length, lyrics: $('#lyrics').value, project: projectJSON(),
+    settings: settingsNow(), rap: rapToRecord(),
+  };
+  await cPut(rec);
+  S.currentId = rec.id; $('#cname').value = rec.name;
+  cMsg(old ? 'Updated “' + name + '”.' : 'Saved “' + name + '”.');
+  renderLibrary();
+}
+async function openCreation(id) {
+  const rec = await cGet(id);
+  if (!rec) return cMsg('That beat is missing.');
+  stop();
+  $('#lyrics').value = rec.lyrics || ''; save('lyrics', $('#lyrics').value);
+  const st = rec.settings || {};
+  if (st.styleChoice) { S.styleChoice = st.styleChoice; save('style', S.styleChoice); }
+  if (st.chordSound) { S.chordSound = st.chordSound; save('chordSound', S.chordSound); }
+  if (st.mute) { S.mute = st.mute; save('mute', JSON.stringify(S.mute)); }
+  if (st.bplChoice) { S.bplChoice = st.bplChoice; save('bpl', S.bplChoice); }
+  if (typeof st.structure === 'boolean') { S.structure = st.structure; save('structure', st.structure ? '1' : '0'); }
+  if (st.kitChoice) { S.kitChoice = st.kitChoice; save('kit', S.kitChoice); }
+  S.rap = rapFromRecord(rec.rap); $('#playRapWrap').style.display = S.rap ? '' : 'none';
+  applyPrefs();
+  if (!loadProject(rec.project)) return cMsg('That beat was saved by an older version and cannot be opened.');
+  S.currentId = rec.id; $('#cname').value = rec.name;
+  cMsg('Opened “' + rec.name + '”.'); renderLibrary();
+  window.scrollTo({top: 0, behavior: 'smooth'});
+}
+async function renderLibrary() {
+  let all = await cAll();
+  const folders = [...new Set(all.map(r => r.folder).filter(Boolean))].sort();
+  const fsel = $('#cfolder'), cur = fsel.value || '*';
+  fsel.innerHTML = '<option value="*">All folders</option><option value="">No folder</option><option value="★">★ Favorites</option>' + folders.map(f => `<option value="f:${f.replace(/"/g, '&quot;')}">📁 ${f.replace(/</g, '&lt;')}</option>`).join('');
+  fsel.value = [...fsel.options].some(o => o.value === cur) ? cur : '*';
+  const q = $('#csearch').value.trim().toLowerCase(), fv = fsel.value;
+  all = all.filter(r => (fv === '*' || (fv === '' ? !r.folder : fv === '★' ? r.fav : r.folder === fv.slice(2))) && (!q || (r.name + ' ' + (r.lyrics || '') + ' ' + (r.folder || '')).toLowerCase().includes(q)));
+  const sort = $('#csort').value;
+  all.sort((a, b) => sort === 'name' ? a.name.localeCompare(b.name) : sort === 'fav' ? (b.fav - a.fav) || (b.updated - a.updated) : b.updated - a.updated);
+  const el = $('#clist'); el.innerHTML = '';
+  if (!all.length) { el.innerHTML = '<p class="hint" style="margin:6px 0">Nothing here yet. Make a beat and tap Save.</p>'; return; }
+  for (const r of all) {
+    const row = document.createElement('div'); row.className = 'cr' + (r.id === S.currentId ? ' cur' : '');
+    row.innerHTML = '<button class="star" title="Favorite"></button><div><div class="nm"></div><div class="meta"></div></div><div class="acts"><button data-a="ren">Rename</button><button data-a="fol">Folder</button><button data-a="dup">Copy</button><button data-a="del">Delete</button></div>';
+    const star = row.querySelector('.star'); star.textContent = r.fav ? '★' : '☆'; star.classList.toggle('on', !!r.fav);
+    row.querySelector('.nm').textContent = r.name;
+    row.querySelector('.meta').textContent = `${GENRE_NAME[r.genre] || r.genre} · ${r.bpm} BPM · ${r.bars} bars${r.folder ? ' · 📁 ' + r.folder : ''}${r.rap ? ' · 🎤' : ''} · ${new Date(r.updated).toLocaleDateString()}`;
+    star.onclick = async () => { r.fav = !r.fav; await cPut(r); renderLibrary(); };
+    row.querySelector('.nm').onclick = () => openCreation(r.id);
+    row.querySelector('.acts').onclick = async e => {
+      const a = e.target.dataset.a; if (!a) return;
+      if (a === 'ren') { const n = prompt('Rename this beat', r.name); if (n && n.trim()) { r.name = n.trim(); await cPut(r); if (r.id === S.currentId) $('#cname').value = r.name; renderLibrary(); } }
+      if (a === 'fol') { const n = prompt('Folder name (leave empty for none). Beats with the same folder name are grouped together.', r.folder || ''); if (n !== null) { r.folder = n.trim(); await cPut(r); renderLibrary(); } }
+      if (a === 'dup') { await cPut(Object.assign({}, r, {id: newId(), name: r.name + ' copy', created: Date.now(), updated: Date.now()})); renderLibrary(); }
+      if (a === 'del') { if (confirm('Delete “' + r.name + '”? This cannot be undone.')) { await cDel(r.id); if (r.id === S.currentId) S.currentId = null; renderLibrary(); } }
+    };
+    el.appendChild(row);
+  }
+}
+const b64 = buf => { let s = '', u = new Uint8Array(buf); for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); };
+const unb64 = t => { const s = atob(t), u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); return u.buffer; };
+async function backupAll() {
+  const all = await cAll();
+  if (!all.length) return cMsg('Nothing to back up yet. Save a beat first.');
+  const out = {app: 'lyric-beat-maker', v: 1, saved: new Date().toISOString(), creations: all.map(r => Object.assign({}, r, {rap: r.rap ? Object.assign({}, r.rap, {pcm: b64(r.rap.pcm)}) : null}))};
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(out)], {type: 'application/json'}));
+  a.download = `lyric-beat-maker-backup-${new Date().toISOString().slice(0, 10)}.json`; a.click();
+  cMsg(`Backed up ${all.length} beat${all.length > 1 ? 's' : ''}. Your API key is never included.`);
+}
+async function restoreBackup(file) {
+  try {
+    const j = JSON.parse(await file.text());
+    if (j.app !== 'lyric-beat-maker' || !Array.isArray(j.creations)) throw new Error('not a backup file');
+    let n = 0;
+    for (const r of j.creations) {
+      if (!r.id || !r.project) continue;
+      const have = await cGet(r.id);
+      if (have && have.updated >= r.updated) continue;
+      if (r.rap && typeof r.rap.pcm === 'string') r.rap = Object.assign({}, r.rap, {pcm: unb64(r.rap.pcm)});
+      await cPut(r); n++;
+    }
+    cMsg(`Restored ${n} beat${n === 1 ? '' : 's'}.`); renderLibrary();
+  } catch (e) { cMsg('Could not read that file (' + e.message + ').'); }
+}
+$('#csave').onclick = () => saveCreation(false);
+$('#csavenew').onclick = () => saveCreation(true);
+$('#cnew').onclick = () => { S.currentId = null; $('#cname').value = ''; renderLibrary(); cMsg('Ready for a new beat. Your last one is still in the list if you saved it.'); };
+$('#csearch').oninput = renderLibrary; $('#cfolder').onchange = renderLibrary; $('#csort').onchange = renderLibrary;
+$('#cbackup').onclick = backupAll;
+$('#crestore').onclick = () => $('#cfile').click();
+$('#cfile').onchange = e => { if (e.target.files[0]) restoreBackup(e.target.files[0]); e.target.value = ''; };
+
 /* ---------- rap into the app: find where the rapper hits each syllable ---------- */
 function setRap(t, err) { $('#rapstat').textContent = t; $('#rapstat').style.color = err ? '#ffb4a2' : ''; }
 function pct(arr, q) { const a = Float32Array.from(arr).sort(); return a[Math.min(a.length - 1, Math.floor(q * a.length))]; }
@@ -1467,16 +1619,18 @@ function projectJSON() {
 function saveProject() {
   if (!S.info || !S.bars.length) return;
   save('project', projectJSON());
+  if (S.currentId) cGet(S.currentId).then(rec => { if (rec) { rec.project = projectJSON(); rec.lyrics = $('#lyrics').value; rec.genre = S.genre; rec.bpm = S.bpm; rec.bars = S.bars.length; rec.settings = settingsNow(); rec.updated = Date.now(); cPut(rec); } });
 }
 function restoreProject() { loadProject(lsGet('project')); }
 function loadProject(text) {
   try {
     const j = JSON.parse(text || 'null');
-    if (!j || j.v !== 4 || !j.bars || !j.bars.length || !j.bars.every(b => b.chords && b.lead && b.chord && b.crash && b.riser && b.slide && b.section)) return;
+    if (!j || j.v !== 4 || !j.bars || !j.bars.length || !j.bars.every(b => b.chords && b.lead && b.chord && b.crash && b.riser && b.slide && b.section)) return false;
     Object.assign(S, {bpl: j.bpl || 1, info: j.info, genre: j.genre, bpm: j.bpm, swing: j.swing, minor: j.minor, root: j.root, seed: j.seed, melSeed: j.melSeed, lang: j.lang, bars: j.bars, sel: Math.min(j.sel || 0, j.bars.length - 1)});
     $('#genre').value = S.genre; $('#bpm').value = S.bpm; $('#swing').value = S.swing;
     applyKit(); renderAll();
-  } catch (e) { /* ignore a corrupt save */ }
+    return true;
+  } catch (e) { return false; /* ignore a corrupt save */ }
 }
 function applyPrefs() {
   if (lsGet('kit')) S.kitChoice = lsGet('kit');
@@ -1501,6 +1655,7 @@ async function boot() {
   renderSounds(); restoreUserSamples(); loadInstruments();
   loadKit(S.kitChoice === 'auto' ? 'boombap' : S.kitChoice);
   restoreProject();
+  renderLibrary();
   if (getKey()) setStatus('');
 }
 boot();
